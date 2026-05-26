@@ -17,7 +17,7 @@ import { truncateText } from "./lib/format.js";
 
 const id = "opencode-statusline";
 const STATUSLINE_SLOT_ORDER = 95;
-const REFRESH_INTERVAL_MS = 30_000;
+const REFRESH_INTERVAL_MS = 2_000;
 const EVENT_REFRESH_DELAY_MS = 150;
 const configListeners = new Set<() => void>();
 let usageDialogOpen = false;
@@ -267,7 +267,8 @@ const tui: TuiPlugin = async (api) => {
             disabled={props.disabled}
             onSubmit={props.on_submit}
             ref={props.ref as any}
-            right={<StatuslineView api={api} sessionID={props.session_id} />}
+            hint={<StatuslineView api={api} sessionID={props.session_id} />}
+            right={<api.ui.Slot name="session_prompt_right" session_id={props.session_id} />}
           />
         );
       }
