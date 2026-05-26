@@ -53,6 +53,25 @@ Available statusline fields:
 
 Fields are rendered in the order selected in `/statusline`; unavailable provider/model data is omitted. Field groups are color-coded in the TUI, with muted separators.
 
+## Supported usage providers
+
+`/usage` and quota statusline fields currently have collectors for these provider IDs. Provider IDs are matched case-insensitively.
+
+| Provider / plan | Provider IDs | Credential hints | Data shown when available |
+| --- | --- | --- | --- |
+| Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota and time quota windows returned by Z.ai |
+| Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota and time quota windows returned by BigModel |
+| Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | Usage windows returned by Kimi Code, including 5h when present |
+| MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h and weekly token quota |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | Account balance and availability |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | Key label, remaining limit, total limit, usage totals |
+| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h, weekly, and monthly dashboard quota when the dashboard HTML shape matches |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OAuth entry in OpenCode `auth.json` | ChatGPT plan, 5h/weekly windows, code review quota, credits when present |
+
+API-key providers resolve credentials in this order: environment variables, OpenCode `provider.<id>.options.apiKey`, the runtime provider key, then OpenCode `auth.json`. OpenAI/ChatGPT/Codex usage uses OAuth from `auth.json`.
+
+`opencode` / OpenCode Zen is recognized, but OpenCode Zen does not currently expose a public balance/quota API, so quota fields are omitted.
+
 ## OpenCode config
 
 Add the package/path as a TUI plugin so `/usage` and `/statusline` are handled before they enter chat context.
