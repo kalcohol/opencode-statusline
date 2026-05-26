@@ -20,6 +20,7 @@ const STATUSLINE_SLOT_ORDER = 95;
 const REFRESH_INTERVAL_MS = 30_000;
 const EVENT_REFRESH_DELAY_MS = 150;
 const configListeners = new Set<() => void>();
+let usageDialogOpen = false;
 
 function notifyConfigChanged(): void {
   for (const listener of configListeners) listener();
@@ -99,7 +100,13 @@ function usageRows(message: string): Array<{ label?: string; value: string }> {
     });
 }
 
-function UsageDialog(props: { api: TuiPluginApi; message: string }): JSX.Element {
+function closeUsageDialog(api: TuiPluginApi): void {
+  if (!usageDialogOpen) return;
+  usageDialogOpen = false;
+  api.ui.dialog.clear();
+}
+
+function UsageDialog(props: { api: TuiPluginApi; message: string; onClose: () => void }): JSX.Element {
   const theme = () => props.api.theme.current;
   const rows = createMemo(() => usageRows(props.message));
   return (
@@ -108,7 +115,7 @@ function UsageDialog(props: { api: TuiPluginApi; message: string }): JSX.Element
         <text fg={theme().text} attributes={TextAttributes.BOLD}>
           OpenCode Usage
         </text>
-        <text fg={theme().textMuted} onMouseUp={() => props.api.ui.dialog.clear()}>
+        <text fg={theme().textMuted} onMouseUp={props.onClose}>
           esc
         </text>
       </box>
@@ -142,7 +149,7 @@ function UsageDialog(props: { api: TuiPluginApi; message: string }): JSX.Element
           paddingLeft={3}
           paddingRight={3}
           backgroundColor={theme().primary}
-          onMouseUp={() => props.api.ui.dialog.clear()}
+          onMouseUp={props.onClose}
         >
           <text fg={theme().selectedListItemText}>ok</text>
         </box>
@@ -152,7 +159,13 @@ function UsageDialog(props: { api: TuiPluginApi; message: string }): JSX.Element
 }
 
 function showUsageDialog(api: TuiPluginApi, message: string): void {
-  api.ui.dialog.replace(() => <UsageDialog api={api} message={message} />);
+  api.ui.dialog.replace(
+    () => <UsageDialog api={api} message={message} onClose={() => closeUsageDialog(api)} />,
+    () => {
+      usageDialogOpen = false;
+    }
+  );
+  usageDialogOpen = true;
   api.ui.dialog.setSize("large");
 }
 
@@ -240,8 +253,23 @@ const tui: TuiPlugin = async (api) => {
   api.slots.register({
     order: STATUSLINE_SLOT_ORDER,
     slots: {
-      session_prompt_right(_ctx, props: { session_id: string }) {
-        return <StatuslineView api={api} sessionID={props.session_id} />;
+      session_prompt(_ctx, props: {
+        session_id: string;
+        visible?: boolean;
+        disabled?: boolean;
+        on_submit?: () => void;
+        ref?: (ref: unknown) => void;
+      }) {
+        return (
+          <api.ui.Prompt
+            sessionID={props.session_id}
+            visible={props.visible}
+            disabled={props.disabled}
+            onSubmit={props.on_submit}
+            ref={props.ref as any}
+            right={<StatuslineView api={api} sessionID={props.session_id} />}
+          />
+        );
       }
     }
   });
@@ -260,6 +288,16 @@ const tui: TuiPlugin = async (api) => {
         }
       },
       {
+        namespace: "dialog",
+        name: "opencode-statusline.usage.close",
+        title: "Close usage dialog",
+        hidden: true,
+        enabled: () => usageDialogOpen,
+        run() {
+          closeUsageDialog(api);
+        }
+      },
+      {
         namespace: "palette",
         name: "opencode-statusline.configure",
         title: "Statusline fields",
@@ -269,6 +307,14 @@ const tui: TuiPlugin = async (api) => {
         run() {
           openStatuslineDialog(api);
         }
+      }
+    ],
+    bindings: [
+      {
+        key: "return",
+        desc: "Close usage dialog",
+        group: "Dialog",
+        cmd: "opencode-statusline.usage.close"
       }
     ]
   } as any);
