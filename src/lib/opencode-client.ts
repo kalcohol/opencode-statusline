@@ -24,7 +24,7 @@ export type ModelMeta = {
   modelID?: string;
 };
 
-type RecentModelState = {
+export type RecentModelState = {
   model: ModelMeta;
   mtimeMs: number;
 };
@@ -172,6 +172,10 @@ function readRecentModelState(providers?: readonly ProviderInfoLike[]): RecentMo
     // The file only exists after the TUI model picker has written recent models.
   }
   return undefined;
+}
+
+export function readRecentModelStateFromFile(providers?: readonly ProviderInfoLike[]): RecentModelState | undefined {
+  return readRecentModelState(providers);
 }
 
 export function readRecentModelFromState(providers?: readonly ProviderInfoLike[]): ModelMeta | undefined {

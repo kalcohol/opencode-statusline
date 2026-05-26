@@ -6,6 +6,7 @@ import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plug
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { buildTuiStatusline } from "./lib/statusline.js";
 import { buildTuiUsageText } from "./lib/tui-usage.js";
+import { readRecentModelStateFromFile } from "./lib/opencode-client.js";
 import {
   STATUSLINE_FIELDS,
   loadStatuslineConfig,
@@ -17,7 +18,8 @@ import { truncateText } from "./lib/format.js";
 
 const id = "opencode-statusline";
 const STATUSLINE_SLOT_ORDER = 95;
-const REFRESH_INTERVAL_MS = 2_000;
+const MODEL_POLL_INTERVAL_MS = 2_000;
+const FULL_REFRESH_INTERVAL_MS = 60_000;
 const EVENT_REFRESH_DELAY_MS = 150;
 const configListeners = new Set<() => void>();
 let usageDialogOpen = false;
@@ -189,9 +191,16 @@ function StatuslineView(props: { api: TuiPluginApi; sessionID: string }): JSX.El
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let disposed = false;
   let version = 0;
+  let lastRecentModelKey = "";
+
+  const recentModelKey = () => {
+    const recent = readRecentModelStateFromFile(props.api.state.provider);
+    return recent ? `${recent.mtimeMs}:${recent.model.providerID}/${recent.model.modelID ?? ""}` : "";
+  };
 
   const reload = () => {
     if (disposed) return;
+    lastRecentModelKey = recentModelKey();
     const currentVersion = ++version;
     void buildTuiStatusline(props.api, props.sessionID)
       .then((next) => {
@@ -212,9 +221,17 @@ function StatuslineView(props: { api: TuiPluginApi; sessionID: string }): JSX.El
     timers.add(timer);
   };
 
+  const pollRecentModel = () => {
+    if (disposed) return;
+    const next = recentModelKey();
+    if (next === lastRecentModelKey) return;
+    reload();
+  };
+
   createEffect(reload);
 
-  const interval = setInterval(reload, REFRESH_INTERVAL_MS);
+  const fullRefreshInterval = setInterval(reload, FULL_REFRESH_INTERVAL_MS);
+  const modelPollInterval = setInterval(pollRecentModel, MODEL_POLL_INTERVAL_MS);
   const unsubscribers = [
     onConfigChanged(queueReload),
     props.api.event.on("session.updated", (event) => {
@@ -233,7 +250,8 @@ function StatuslineView(props: { api: TuiPluginApi; sessionID: string }): JSX.El
 
   onCleanup(() => {
     disposed = true;
-    clearInterval(interval);
+    clearInterval(fullRefreshInterval);
+    clearInterval(modelPollInterval);
     for (const timer of timers) clearTimeout(timer);
     for (const unsubscribe of unsubscribers) unsubscribe();
   });
