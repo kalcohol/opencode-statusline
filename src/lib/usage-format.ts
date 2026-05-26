@@ -22,7 +22,7 @@ export function formatUsageReport(report: UsageReport | undefined): string {
     return [
       "Usage unavailable",
       "",
-      "Could not resolve the current provider/model for this session. Send one model request first or set config.model."
+      "Could not resolve the current provider/model. Open a session, send one model request, or set config.model."
     ].join("\n");
   }
 

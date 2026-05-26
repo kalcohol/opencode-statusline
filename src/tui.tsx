@@ -1,7 +1,9 @@
 /** @jsxImportSource @opentui/solid */
+import { TextAttributes } from "@opentui/core";
 import type { JSX } from "@opentui/solid";
+import { useTerminalDimensions } from "@opentui/solid";
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui";
-import { Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { buildTuiStatusline } from "./lib/statusline.js";
 import { buildTuiUsageText } from "./lib/tui-usage.js";
 import {
@@ -11,6 +13,7 @@ import {
   uniqueFields,
   type StatuslineFieldID
 } from "./lib/statusline-config.js";
+import { truncateText } from "./lib/format.js";
 
 const id = "opencode-statusline";
 const STATUSLINE_SLOT_ORDER = 95;
@@ -81,19 +84,84 @@ function currentSessionID(api: TuiPluginApi): string | undefined {
   return typeof route.params?.sessionID === "string" ? route.params.sessionID : undefined;
 }
 
+function usageRows(message: string): Array<{ label?: string; value: string }> {
+  return message
+    .split("\n")
+    .filter((line, index) => !(index === 0 && line === "OpenCode Usage"))
+    .map((line) => {
+      if (!line.trim()) return { value: "" };
+      const separator = line.indexOf(":");
+      if (separator <= 0) return { value: line };
+      return {
+        label: line.slice(0, separator),
+        value: line.slice(separator + 1).trim()
+      };
+    });
+}
+
+function UsageDialog(props: { api: TuiPluginApi; message: string }): JSX.Element {
+  const theme = () => props.api.theme.current;
+  const rows = createMemo(() => usageRows(props.message));
+  return (
+    <box paddingLeft={2} paddingRight={2} gap={1}>
+      <box flexDirection="row" justifyContent="space-between">
+        <text fg={theme().text} attributes={TextAttributes.BOLD}>
+          OpenCode Usage
+        </text>
+        <text fg={theme().textMuted} onMouseUp={() => props.api.ui.dialog.clear()}>
+          esc
+        </text>
+      </box>
+      <box gap={0} paddingBottom={1}>
+        <For each={rows()}>
+          {(row) => (
+            <Show
+              when={row.value}
+              fallback={<box height={1} />}
+            >
+              <box flexDirection="row" gap={1} width="100%">
+                <Show when={row.label} fallback={<text fg={theme().textMuted} wrapMode="word" width="100%">{row.value}</text>}>
+                  {(label) => (
+                    <>
+                      <text fg={theme().textMuted} width={16} flexShrink={0} wrapMode="none">
+                        {label()}
+                      </text>
+                      <text fg={theme().text} wrapMode="word" width="100%">
+                        {row.value}
+                      </text>
+                    </>
+                  )}
+                </Show>
+              </box>
+            </Show>
+          )}
+        </For>
+      </box>
+      <box flexDirection="row" justifyContent="flex-end" paddingBottom={1}>
+        <box
+          paddingLeft={3}
+          paddingRight={3}
+          backgroundColor={theme().primary}
+          onMouseUp={() => props.api.ui.dialog.clear()}
+        >
+          <text fg={theme().selectedListItemText}>ok</text>
+        </box>
+      </box>
+    </box>
+  );
+}
+
 function showUsageDialog(api: TuiPluginApi, message: string): void {
-  api.ui.dialog.replace(() => <api.ui.DialogAlert title="OpenCode Usage" message={message} />);
+  api.ui.dialog.replace(() => <UsageDialog api={api} message={message} />);
+  api.ui.dialog.setSize("large");
 }
 
 function openUsageDialog(api: TuiPluginApi): void {
-  const sessionID = currentSessionID(api);
-  if (!sessionID) {
-    showUsageDialog(api, "Open a session before running /usage.");
-    return;
-  }
+  const sessionID = currentSessionID(api) ?? "";
+  const notice = sessionID ? "" : "No open session: using configured or recent model.\n\n";
   showUsageDialog(api, "Loading usage...");
   void buildTuiUsageText(api, sessionID)
-    .then((message) => showUsageDialog(api, message))
+    .then((message) => showUsageDialog(api, `${notice}${message}`))
     .catch((err) => {
       const message = err instanceof Error && err.message ? err.message : "Could not load usage.";
       showUsageDialog(api, `Usage unavailable\n\n${message}`);
@@ -102,6 +170,9 @@ function openUsageDialog(api: TuiPluginApi): void {
 
 function StatuslineView(props: { api: TuiPluginApi; sessionID: string }): JSX.Element {
   const [text, setText] = createSignal("");
+  const dimensions = useTerminalDimensions();
+  const maxWidth = createMemo(() => Math.max(16, Math.min(72, Math.floor(dimensions().width * 0.42))));
+  const displayText = createMemo(() => truncateText(text(), maxWidth()));
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let disposed = false;
   let version = 0;
@@ -116,7 +187,7 @@ function StatuslineView(props: { api: TuiPluginApi; sessionID: string }): JSX.El
       })
       .catch(() => {
         if (disposed || currentVersion !== version) return;
-        setText("");
+        setText("statusline error");
       });
   };
 
@@ -156,9 +227,11 @@ function StatuslineView(props: { api: TuiPluginApi; sessionID: string }): JSX.El
 
   return (
     <Show when={text()}>
-      <text fg={props.api.theme.current.textMuted} wrapMode="none">
-        {text()}
-      </text>
+      <box flexShrink={0}>
+        <text fg={props.api.theme.current.textMuted} wrapMode="none" flexShrink={0}>
+          {displayText()}
+        </text>
+      </box>
     </Show>
   );
 }
