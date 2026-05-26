@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { TextAttributes } from "@opentui/core";
+import { TextAttributes, type BoxRenderable } from "@opentui/core";
 import type { JSX } from "@opentui/solid";
 import { useTerminalDimensions } from "@opentui/solid";
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui";
@@ -7,6 +7,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 import { buildTuiStatusline } from "./lib/statusline.js";
 import { buildTuiUsageText } from "./lib/tui-usage.js";
 import { readRecentModelStateFromFile } from "./lib/opencode-client.js";
+import type { ProviderInfoLike } from "./lib/providers.js";
 import {
   STATUSLINE_FIELDS,
   loadStatuslineConfig,
@@ -14,13 +15,21 @@ import {
   uniqueFields,
   type StatuslineFieldID
 } from "./lib/statusline-config.js";
-import { truncateText } from "./lib/format.js";
+import { isRecord, sanitizeDisplayText, toNonEmptyString } from "./lib/format.js";
 
 const id = "opencode-statusline";
 const STATUSLINE_SLOT_ORDER = 95;
 const MODEL_POLL_INTERVAL_MS = 2_000;
 const FULL_REFRESH_INTERVAL_MS = 60_000;
 const EVENT_REFRESH_DELAY_MS = 150;
+const SESSION_SIDEBAR_WIDTH = 42;
+const SESSION_HORIZONTAL_PADDING = 4;
+const PROMPT_HORIZONTAL_PADDING = 4;
+const PROMPT_LEFT_BORDER_WIDTH = 1;
+const PROMPT_ROW_GAP = 1;
+const RIGHT_CONTENT_GAP = 1;
+const STATUSLINE_SAFETY_COLUMNS = 2;
+const MIN_STATUSLINE_COLUMNS = 8;
 const configListeners = new Set<() => void>();
 let usageDialogOpen = false;
 
@@ -183,11 +192,188 @@ function openUsageDialog(api: TuiPluginApi): void {
     });
 }
 
-function StatuslineView(props: { api: TuiPluginApi; sessionID: string }): JSX.Element {
+type PromptModelMeta = {
+  providerID?: string;
+  modelID?: string;
+};
+
+function displayColumns(value: string): number {
+  let width = 0;
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code === 0 || code < 0x20 || (code >= 0x7f && code < 0xa0)) continue;
+    width += code >= 0x1100
+      && (code <= 0x115f
+        || code === 0x2329
+        || code === 0x232a
+        || (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f)
+        || (code >= 0xac00 && code <= 0xd7a3)
+        || (code >= 0xf900 && code <= 0xfaff)
+        || (code >= 0xfe10 && code <= 0xfe19)
+        || (code >= 0xfe30 && code <= 0xfe6f)
+        || (code >= 0xff00 && code <= 0xff60)
+        || (code >= 0xffe0 && code <= 0xffe6))
+      ? 2
+      : 1;
+  }
+  return width;
+}
+
+function truncateColumns(value: string, maxColumns: number): string {
+  if (maxColumns < MIN_STATUSLINE_COLUMNS) return "";
+  const cleaned = sanitizeDisplayText(value).replace(/\s+/g, " ").trim();
+  if (displayColumns(cleaned) <= maxColumns) return cleaned;
+  const suffix = "...";
+  const contentColumns = Math.max(0, maxColumns - displayColumns(suffix));
+  let used = 0;
+  let output = "";
+  for (const char of cleaned) {
+    const width = displayColumns(char);
+    if (used + width > contentColumns) break;
+    output += char;
+    used += width;
+  }
+  return output ? `${output}${suffix}` : "";
+}
+
+function parseConfigModel(config: unknown): PromptModelMeta {
+  if (!isRecord(config)) return {};
+  const raw = toNonEmptyString(config.model);
+  if (!raw) return {};
+  const slash = raw.indexOf("/");
+  if (slash <= 0) return {};
+  return { providerID: raw.slice(0, slash), modelID: raw.slice(slash + 1) || undefined };
+}
+
+function modelFromSession(session: unknown): PromptModelMeta {
+  if (!isRecord(session)) return {};
+  const model = isRecord(session.model) ? session.model : undefined;
+  return {
+    providerID: toNonEmptyString(model?.providerID),
+    modelID: toNonEmptyString(model?.modelID) ?? toNonEmptyString(model?.id)
+  };
+}
+
+function modelFromMessage(message: unknown): PromptModelMeta {
+  if (!isRecord(message)) return {};
+  const providerID = toNonEmptyString(message.providerID);
+  const modelID = toNonEmptyString(message.modelID);
+  if (providerID || modelID) return { providerID, modelID };
+  const model = isRecord(message.model) ? message.model : undefined;
+  return {
+    providerID: toNonEmptyString(model?.providerID),
+    modelID: toNonEmptyString(model?.modelID) ?? toNonEmptyString(model?.id)
+  };
+}
+
+function resolvePromptModel(api: TuiPluginApi, sessionID: string): PromptModelMeta {
+  const recent = readRecentModelStateFromFile(api.state.provider)?.model;
+  if (recent) return recent;
+
+  const sessionMeta = modelFromSession(api.state.session.get(sessionID));
+  if (sessionMeta.providerID || sessionMeta.modelID) return sessionMeta;
+
+  const messages = api.state.session.messages(sessionID);
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const meta = modelFromMessage(messages[index]);
+    if (meta.providerID || meta.modelID) return meta;
+  }
+
+  return parseConfigModel(api.state.config);
+}
+
+function titleCase(value: string): string {
+  return value ? `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}` : value;
+}
+
+function promptAgentLabel(api: TuiPluginApi, sessionID: string): string {
+  const session = api.state.session.get(sessionID);
+  if (!isRecord(session)) return "Build";
+  const sessionRecord = session as Record<string, unknown>;
+  return titleCase(
+    toNonEmptyString(sessionRecord.agent)
+      ?? toNonEmptyString(sessionRecord.mode)
+      ?? "build"
+  );
+}
+
+function providerModelName(provider: ProviderInfoLike | undefined, modelID: string | undefined): string | undefined {
+  if (!modelID) return undefined;
+  if (!provider || !isRecord(provider.models)) return modelID;
+  const model = provider.models[modelID];
+  return isRecord(model) ? toNonEmptyString(model.name) ?? modelID : modelID;
+}
+
+function estimatePromptLeftColumns(api: TuiPluginApi, sessionID: string): number {
+  const meta = resolvePromptModel(api, sessionID);
+  const provider = api.state.provider.find((item) => item.id === meta.providerID);
+  const parts = [
+    promptAgentLabel(api, sessionID),
+    meta.providerID || meta.modelID ? "·" : undefined,
+    providerModelName(provider, meta.modelID),
+    toNonEmptyString(provider?.name) ?? meta.providerID
+  ].filter((part): part is string => Boolean(part));
+
+  const textColumns = parts.reduce((total, part) => total + displayColumns(part), 0);
+  const gapColumns = Math.max(0, parts.length - 1);
+  return textColumns + gapColumns;
+}
+
+function estimatePromptInnerColumns(api: TuiPluginApi, sessionID: string, terminalColumns: number): number {
+  const session = api.state.session.get(sessionID);
+  const isSubagent = isRecord(session) && Boolean(toNonEmptyString(session.parentID));
+  const sidebarMode = api.kv.get<"auto" | "hide">("sidebar", "auto");
+  const sidebarVisible = !isSubagent && sidebarMode !== "hide" && terminalColumns > 120;
+  return Math.max(
+    0,
+    terminalColumns
+      - (sidebarVisible ? SESSION_SIDEBAR_WIDTH : 0)
+      - SESSION_HORIZONTAL_PADDING
+      - PROMPT_HORIZONTAL_PADDING
+      - PROMPT_LEFT_BORDER_WIDTH
+  );
+}
+
+function statuslineColumnsBudget(input: {
+  api: TuiPluginApi;
+  sessionID: string;
+  terminalColumns: number;
+  rightSlotColumns: number;
+}): number {
+  const promptColumns = estimatePromptInnerColumns(input.api, input.sessionID, input.terminalColumns);
+  const leftColumns = estimatePromptLeftColumns(input.api, input.sessionID);
+  const rightSlotColumns = Math.max(0, Math.ceil(input.rightSlotColumns));
+  const rightGap = rightSlotColumns > 0 ? RIGHT_CONTENT_GAP : 0;
+  return Math.max(
+    0,
+    promptColumns
+      - leftColumns
+      - rightSlotColumns
+      - rightGap
+      - PROMPT_ROW_GAP
+      - STATUSLINE_SAFETY_COLUMNS
+  );
+}
+
+function StatuslineView(props: {
+  api: TuiPluginApi;
+  sessionID: string;
+  rightSlotColumns: number;
+}): JSX.Element {
   const [text, setText] = createSignal("");
+  const [layoutVersion, setLayoutVersion] = createSignal(0);
   const dimensions = useTerminalDimensions();
-  const maxWidth = createMemo(() => Math.max(16, Math.min(44, Math.floor(dimensions().width * 0.24))));
-  const displayText = createMemo(() => truncateText(text(), maxWidth()));
+  const maxWidth = createMemo(() => {
+    layoutVersion();
+    return statuslineColumnsBudget({
+      api: props.api,
+      sessionID: props.sessionID,
+      terminalColumns: dimensions().width,
+      rightSlotColumns: props.rightSlotColumns
+    });
+  });
+  const displayText = createMemo(() => truncateColumns(text(), maxWidth()));
+  const displayWidth = createMemo(() => displayColumns(displayText()));
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let disposed = false;
   let version = 0;
@@ -245,6 +431,12 @@ function StatuslineView(props: { api: TuiPluginApi; sessionID: string }): JSX.El
     }),
     props.api.event.on("tui.session.select", (event) => {
       if ((event as any).properties?.sessionID === props.sessionID) queueReload();
+    }),
+    props.api.event.on("tui.command.execute", (event) => {
+      if ((event as any).properties?.command !== "session.sidebar.toggle") return;
+      setTimeout(() => {
+        if (!disposed) setLayoutVersion((value) => value + 1);
+      }, 0);
     })
   ];
 
@@ -257,13 +449,39 @@ function StatuslineView(props: { api: TuiPluginApi; sessionID: string }): JSX.El
   });
 
   return (
-    <Show when={text()}>
-      <box flexShrink={0}>
-        <text fg={props.api.theme.current.textMuted} wrapMode="none" flexShrink={0}>
+    <Show when={displayText()}>
+      <box width={displayWidth()} flexShrink={0}>
+        <text fg={props.api.theme.current.textMuted} wrapMode="none" width={displayWidth()} flexShrink={0}>
           {displayText()}
         </text>
       </box>
     </Show>
+  );
+}
+
+function PromptRightContent(props: { api: TuiPluginApi; sessionID: string }): JSX.Element {
+  const [rightSlotColumns, setRightSlotColumns] = createSignal(0);
+
+  const recordRightSlotWidth = (node: BoxRenderable | undefined) => {
+    const width = node?.width ?? 0;
+    setRightSlotColumns((current) => (current === width ? current : width));
+  };
+
+  return (
+    <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
+      <StatuslineView api={props.api} sessionID={props.sessionID} rightSlotColumns={rightSlotColumns()} />
+      <box
+        flexDirection="row"
+        gap={1}
+        flexShrink={0}
+        ref={(node: BoxRenderable) => recordRightSlotWidth(node)}
+        onSizeChange={function (this: BoxRenderable) {
+          recordRightSlotWidth(this);
+        }}
+      >
+        <props.api.ui.Slot name="session_prompt_right" session_id={props.sessionID} />
+      </box>
+    </box>
   );
 }
 
@@ -285,12 +503,7 @@ const tui: TuiPlugin = async (api) => {
             disabled={props.disabled}
             onSubmit={props.on_submit}
             ref={props.ref as any}
-            right={
-              <box flexDirection="row" gap={1} flexShrink={0}>
-                <StatuslineView api={api} sessionID={props.session_id} />
-                <api.ui.Slot name="session_prompt_right" session_id={props.session_id} />
-              </box>
-            }
+            right={<PromptRightContent api={api} sessionID={props.session_id} />}
           />
         );
       }
