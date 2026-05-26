@@ -186,7 +186,7 @@ function openUsageDialog(api: TuiPluginApi): void {
 function StatuslineView(props: { api: TuiPluginApi; sessionID: string }): JSX.Element {
   const [text, setText] = createSignal("");
   const dimensions = useTerminalDimensions();
-  const maxWidth = createMemo(() => Math.max(16, Math.min(72, Math.floor(dimensions().width * 0.42))));
+  const maxWidth = createMemo(() => Math.max(16, Math.min(44, Math.floor(dimensions().width * 0.24))));
   const displayText = createMemo(() => truncateText(text(), maxWidth()));
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let disposed = false;
@@ -285,8 +285,12 @@ const tui: TuiPlugin = async (api) => {
             disabled={props.disabled}
             onSubmit={props.on_submit}
             ref={props.ref as any}
-            hint={<StatuslineView api={api} sessionID={props.session_id} />}
-            right={<api.ui.Slot name="session_prompt_right" session_id={props.session_id} />}
+            right={
+              <box flexDirection="row" gap={1} flexShrink={0}>
+                <StatuslineView api={api} sessionID={props.session_id} />
+                <api.ui.Slot name="session_prompt_right" session_id={props.session_id} />
+              </box>
+            }
           />
         );
       }
