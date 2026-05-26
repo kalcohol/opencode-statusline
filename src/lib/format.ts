@@ -70,10 +70,23 @@ export function formatDurationMs(ms: number): string | undefined {
   return `${totalSeconds}s`;
 }
 
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+export function formatLocalDateTime(ms: number): string | undefined {
+  if (!Number.isFinite(ms) || ms <= 0) return undefined;
+  const date = new Date(ms);
+  return [
+    `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`,
+    `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
+  ].join(" ");
+}
+
 export function formatReset(value: { resetAtMs?: number; resetAfterMs?: number }): string | undefined {
   const resetAtMs = value.resetAtMs;
   if (resetAtMs && Number.isFinite(resetAtMs) && resetAtMs > 0) {
-    return new Date(resetAtMs).toLocaleString();
+    return formatLocalDateTime(resetAtMs);
   }
   const resetAfterMs = value.resetAfterMs;
   if (resetAfterMs && Number.isFinite(resetAfterMs) && resetAfterMs > 0) {

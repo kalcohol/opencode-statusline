@@ -53,6 +53,8 @@ Both slash commands are TUI commands, not server chat commands. They open dialog
 
 If no session is open, `/usage` still attempts to use configured or recent model state. If the model cannot be resolved, it shows a non-fatal "Usage unavailable" message.
 
+Reset timestamps are formatted in local time as fixed-width `YYYY-MM-DD HH:mm:ss` strings so month/day/time fields align across providers.
+
 ## `/statusline` Flow
 
 1. User runs `/statusline`.
@@ -88,22 +90,24 @@ Supported fields:
 | Field id | Display |
 | --- | --- |
 | `repo` | repository/worktree basename |
-| `branch` | `git <branch>` |
+| `branch` | current git branch, without a `git` prefix |
 | `context_used` | latest assistant message token total |
 | `context_remaining` | model context limit minus current context estimate |
 | `context_length` | current model context limit |
 | `context_window` | used/total context window |
 | `generation_metrics` | approximate TTFT and output token generation speed |
-| `subagent_status` | parent/child subagent state |
-| `agent_status` | main session status |
+| `subagent_status` | active parent/child subagent state |
+| `agent_status` | main session status without an `agent` prefix |
 | `quota_5h` | provider 5h quota used percent |
 | `quota_weekly` | provider weekly quota used percent |
-| `session_io` | session input/output tokens |
-| `session_total` | session total tokens |
+| `session_io` | session input/output tokens as `<input> in / <output> out` |
+| `session_total` | session total tokens as `<total> used` |
 
-Unavailable values are omitted. For example, OpenRouter has balance/usage data but no 5h subscription quota window, so `quota_5h` does not render for OpenRouter.
+Unavailable values are omitted. For example, OpenRouter has balance/usage data but no 5h subscription quota window, so `quota_5h` does not render for OpenRouter. Child sessions that are idle or completed are treated as no active subagent, so `subagent_status` is omitted in that state.
 
-`generation_metrics` is approximate because OpenCode exposes message and part timestamps rather than a provider-native TTFT field. The plugin computes TTFT from assistant message creation to the first text/reasoning/tool part start, and computes generation speed from output tokens over text/reasoning part duration.
+`session_io` and `session_total` include child-session messages when OpenCode exposes those child sessions. `session_total` uses OpenCode's explicit total token value when present; otherwise it sums input, output, reasoning, and cache tokens.
+
+`generation_metrics` is approximate because OpenCode exposes message and part timestamps rather than a provider-native TTFT field. The plugin computes TTFT from assistant message creation to the first text/reasoning/tool part start, and computes generation speed from output tokens over text/reasoning part duration. While a newer response is still incomplete, it keeps showing the latest complete metric instead of hiding the field.
 
 TUI rendering uses colored segments:
 

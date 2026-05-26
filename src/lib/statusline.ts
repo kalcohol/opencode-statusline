@@ -34,6 +34,7 @@ type TuiApiLike = {
   client?: {
     session?: {
       children?: (...args: any[]) => Promise<unknown>;
+      messages?: (...args: any[]) => Promise<unknown>;
     };
   };
 };
@@ -210,16 +211,16 @@ function partEndMs(part: Record<string, unknown>): number | undefined {
   return timestampMs(time?.end) ?? timestampMs(stateTime?.end);
 }
 
-function latestAssistantMessage(messages: readonly unknown[]): Record<string, unknown> | undefined {
+function latestAssistantMessages(messages: readonly unknown[]): Record<string, unknown>[] {
+  const result: Record<string, unknown>[] = [];
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (isRecord(message) && message.role === "assistant") return message;
+    if (isRecord(message) && message.role === "assistant") result.push(message);
   }
-  return undefined;
+  return result;
 }
 
-function latestGenerationMetrics(api: TuiApiLike, messages: readonly unknown[]): GenerationMetrics | undefined {
-  const message = latestAssistantMessage(messages);
+function generationMetricsForMessage(api: TuiApiLike, message: Record<string, unknown>): GenerationMetrics | undefined {
   const messageID = toNonEmptyString(message?.id);
   if (!message || !messageID || !api.state.part) return undefined;
 
@@ -257,6 +258,17 @@ function latestGenerationMetrics(api: TuiApiLike, messages: readonly unknown[]):
   return { ttftMs, tokensPerSecond };
 }
 
+function latestGenerationMetrics(api: TuiApiLike, messages: readonly unknown[]): GenerationMetrics | undefined {
+  let partial: GenerationMetrics | undefined;
+  for (const message of latestAssistantMessages(messages)) {
+    const metrics = generationMetricsForMessage(api, message);
+    if (!metrics) continue;
+    if (metrics.ttftMs !== undefined && metrics.tokensPerSecond !== undefined) return metrics;
+    partial ??= metrics;
+  }
+  return partial;
+}
+
 function formatLatencyMs(value: number): string {
   if (value < 1000) return `${Math.round(value)}ms`;
   const seconds = value / 1000;
@@ -289,6 +301,10 @@ function sessionStatusLabel(status: unknown): string | undefined {
   return type;
 }
 
+function isInactiveSubagentStatus(status: string | undefined): boolean {
+  return !status || ["idle", "done", "complete", "completed"].includes(status);
+}
+
 async function getChildSessions(api: TuiApiLike, sessionID: string): Promise<unknown[]> {
   const attempts: unknown[][] = [
     [{ sessionID }],
@@ -307,21 +323,64 @@ async function getChildSessions(api: TuiApiLike, sessionID: string): Promise<unk
   return [];
 }
 
-async function subagentText(api: TuiApiLike, sessionID: string): Promise<string | undefined> {
+function childSessionIDs(children: readonly unknown[]): string[] {
+  return children
+    .map((child) => isRecord(child) ? toNonEmptyString(child.id) : undefined)
+    .filter((id): id is string => Boolean(id));
+}
+
+async function getClientSessionMessages(api: TuiApiLike, sessionID: string): Promise<unknown[]> {
+  const attempts: unknown[][] = [
+    [{ sessionID }],
+    [{ path: { sessionID } }],
+    [{ path: { id: sessionID } }]
+  ];
+  for (const args of attempts) {
+    try {
+      const response = await api.client?.session?.messages?.(...args);
+      const data = isRecord(response) && "data" in response ? response.data : response;
+      if (Array.isArray(data)) return data;
+      if (isRecord(data) && Array.isArray(data.messages)) return data.messages;
+    } catch {
+      // Try the next SDK shape.
+    }
+  }
+  return [];
+}
+
+async function sessionMessages(api: TuiApiLike, sessionID: string): Promise<readonly unknown[]> {
+  const local = api.state.session.messages(sessionID);
+  if (local.length > 0) return local;
+  return getClientSessionMessages(api, sessionID);
+}
+
+async function sessionTokenTotalsWithChildren(
+  api: TuiApiLike,
+  messages: readonly unknown[],
+  children: readonly unknown[]
+): Promise<TokenTotals> {
+  const allMessages: unknown[] = [...messages];
+  for (const childID of childSessionIDs(children)) {
+    allMessages.push(...await sessionMessages(api, childID));
+  }
+  return sessionTokenTotals(allMessages);
+}
+
+async function subagentText(api: TuiApiLike, sessionID: string, children?: readonly unknown[]): Promise<string | undefined> {
   const session = api.state.session.get(sessionID);
   if (isRecord(session) && toNonEmptyString(session.parentID)) {
     const status = sessionStatusLabel(api.state.session.status(sessionID));
-    return status ? `sub ${status}` : "subagent";
+    return isInactiveSubagentStatus(status) ? undefined : `sub ${status}`;
   }
 
-  const children = await getChildSessions(api, sessionID);
-  if (children.length === 0) return "sub none";
-  const statuses = children.map((child) => {
+  const childSessions = children ?? await getChildSessions(api, sessionID);
+  if (childSessions.length === 0) return undefined;
+  const statuses = childSessions.map((child) => {
     const childID = isRecord(child) ? toNonEmptyString(child.id) : undefined;
     return childID ? sessionStatusLabel(api.state.session.status(childID)) : undefined;
   });
-  const busy = statuses.filter((status) => status && status !== "idle");
-  return busy.length ? `sub ${children.length} ${busy[0]}` : `sub ${children.length} idle`;
+  const active = statuses.filter((status) => !isInactiveSubagentStatus(status));
+  return active.length ? `sub ${active.length} ${active[0]}` : undefined;
 }
 
 function quotaText(window: ReturnType<typeof findUsageWindow>, label: string): string | undefined {
@@ -338,8 +397,12 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
   const provider = api.state.provider.find((item) => item.id === meta.providerID);
   const contextUsed = latestContextTokens(messages);
   const contextLimit = modelContextLimit(provider, meta.modelID);
-  const sessionTokens = sessionTokenTotals(messages);
   const generationMetrics = latestGenerationMetrics(api, messages);
+  const childFields = fields.some((field) => ["subagent_status", "session_io", "session_total"].includes(field));
+  const children = childFields ? await getChildSessions(api, sessionID) : [];
+  const sessionTokens = childFields
+    ? await sessionTokenTotalsWithChildren(api, messages, children)
+    : sessionTokenTotals(messages);
 
   let quotaReport;
   if (meta.providerID && (fields.includes("quota_5h") || fields.includes("quota_weekly"))) {
@@ -366,6 +429,7 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
       contextUsed,
       contextLimit,
       generationMetrics,
+      children,
       sessionTokens,
       quotaReport
     });
@@ -388,6 +452,7 @@ async function renderField(input: {
   contextUsed: number;
   contextLimit?: number;
   generationMetrics?: GenerationMetrics;
+  children?: readonly unknown[];
   sessionTokens: TokenTotals;
   quotaReport?: Awaited<ReturnType<typeof collectProviderUsage>>;
 }): Promise<string | undefined> {
@@ -395,7 +460,7 @@ async function renderField(input: {
     case "repo":
       return basename(input.api.state.path.worktree) ?? basename(input.api.state.path.directory);
     case "branch":
-      return input.api.state.vcs?.branch ? `git ${input.api.state.vcs.branch}` : undefined;
+      return input.api.state.vcs?.branch;
     case "context_used":
       return `ctx ${formatTokenAmount(input.contextUsed)}`;
     case "context_remaining":
@@ -413,19 +478,19 @@ async function renderField(input: {
     case "generation_metrics":
       return generationMetricsText(input.generationMetrics);
     case "subagent_status":
-      return subagentText(input.api, input.sessionID);
+      return subagentText(input.api, input.sessionID, input.children);
     case "agent_status": {
       const status = sessionStatusLabel(input.api.state.session.status(input.sessionID));
-      return status ? `agent ${status}` : undefined;
+      return status;
     }
     case "quota_5h":
       return quotaText(findUsageWindow(input.quotaReport, "fiveHour"), "5h");
     case "quota_weekly":
       return quotaText(findUsageWindow(input.quotaReport, "weekly"), "week");
     case "session_io":
-      return `io ${formatTokenAmount(input.sessionTokens.input)}/${formatTokenAmount(input.sessionTokens.output)}`;
+      return `${formatTokenAmount(input.sessionTokens.input)} in / ${formatTokenAmount(input.sessionTokens.output)} out`;
     case "session_total":
-      return `tok ${formatTokenAmount(input.sessionTokens.total)}`;
+      return `${formatTokenAmount(input.sessionTokens.total)} used`;
     default:
       return undefined;
   }

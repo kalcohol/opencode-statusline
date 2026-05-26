@@ -70,6 +70,19 @@ function apiWithGenerationMetrics() {
   };
 }
 
+function assistantMessage(id: string, input: number, output: number) {
+  return {
+    id,
+    role: "assistant",
+    tokens: {
+      input,
+      output,
+      reasoning: 0,
+      cache: { read: 0, write: 0 }
+    }
+  };
+}
+
 describe("buildTuiStatusline", () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-statusline-"));
@@ -101,5 +114,146 @@ describe("buildTuiStatusline", () => {
     fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["generation_metrics"] }));
 
     await expect(buildTuiStatusline(apiWithGenerationMetrics() as any, "ses_1")).resolves.toBe("ttft 600ms gen 40 tok/s");
+  });
+
+  it("keeps the last complete generation metrics while a new response is incomplete", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["generation_metrics"] }));
+    const messages = [
+      {
+        id: "msg_1",
+        role: "assistant",
+        time: { created: 1_000, completed: 4_000 },
+        tokens: { input: 10, output: 80, reasoning: 0, cache: { read: 0, write: 0 } }
+      },
+      {
+        id: "msg_2",
+        role: "assistant",
+        time: { created: 5_000 },
+        tokens: { input: 10, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+      }
+    ];
+    const partsByMessage: Record<string, unknown[]> = {
+      msg_1: [{ id: "prt_1", type: "text", time: { start: 1_600, end: 3_600 }, text: "done" }],
+      msg_2: [{ id: "prt_2", type: "text", time: { start: 5_300 }, text: "" }]
+    };
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => messages,
+          status: () => ({ type: "idle" })
+        },
+        part: (messageID: string) => partsByMessage[messageID] ?? []
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("ttft 600ms gen 40 tok/s");
+  });
+
+  it("uses concise branch, agent, token, and child-session text", async () => {
+    fs.writeFileSync(
+      process.env.OPENCODE_STATUSLINE_CONFIG!,
+      JSON.stringify({ fields: ["branch", "agent_status", "session_io", "session_total"] })
+    );
+    const messagesBySession: Record<string, unknown[]> = {
+      ses_1: [assistantMessage("msg_parent", 1024, 2048)],
+      ses_child: [assistantMessage("msg_child", 3072, 4096)]
+    };
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: { branch: "master" },
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: (sessionID: string) => messagesBySession[sessionID] ?? [],
+          status: () => ({ type: "idle" })
+        }
+      },
+      client: {
+        session: {
+          children: async () => [{ id: "ses_child" }]
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("master | idle | 4K in / 6K out | 10K used");
+  });
+
+  it("aggregates child-session tokens from the client when local state has not loaded them", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_io", "session_total"] }));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: (sessionID: string) => sessionID === "ses_1" ? [assistantMessage("msg_parent", 1024, 2048)] : [],
+          status: () => ({ type: "idle" })
+        }
+      },
+      client: {
+        session: {
+          children: async () => [{ id: "ses_child" }],
+          messages: async (input: { sessionID?: string }) => (
+            input.sessionID === "ses_child"
+              ? { data: [assistantMessage("msg_child", 3072, 4096)] }
+              : { data: [] }
+          )
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("4K in / 6K out | 10K used");
+  });
+
+  it("omits subagent status when all child sessions are idle", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["subagent_status"] }));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [],
+          status: () => ({ type: "idle" })
+        }
+      },
+      client: {
+        session: {
+          children: async () => [{ id: "ses_child_1" }, { id: "ses_child_2" }]
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("");
+  });
+
+  it("omits subagent status for inactive current subagent sessions", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["subagent_status"] }));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ parentID: "ses_parent", model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [],
+          status: () => ({ type: "idle" })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_child")).resolves.toBe("");
   });
 });

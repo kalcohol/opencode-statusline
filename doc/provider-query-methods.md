@@ -366,4 +366,6 @@ All collectors normalize provider-specific data into:
 | `usedPercent` / `remainingPercent` | clamped to `0..100` |
 | `resetAtMs` / `resetAfterMs` | used by UI formatting to show reset time |
 
+Absolute reset timestamps are rendered by `/usage` in local time with fixed-width `YYYY-MM-DD HH:mm:ss` fields. Relative reset durations still use compact duration text.
+
 Quota collection is cached for 60 seconds per provider/model kind. `/usage` forces a fresh read; statusline quota fields use the cache and have a 1 second statusline-side timeout.

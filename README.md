@@ -62,6 +62,8 @@ Shows usage/quota details for the active model's provider. The dialog does not s
 
 The command resolves the active provider/model from the current session, recent TUI model state, or `config.model`. It fetches provider data fresh when opened.
 
+Reset timestamps are shown in local time using fixed-width `YYYY-MM-DD HH:mm:ss` fields.
+
 ### `/statusline`
 
 Opens a field picker. Selecting a field toggles it. The order you select fields is the order used in the prompt statusline.
@@ -71,18 +73,18 @@ Available fields:
 | Field | Description |
 | --- | --- |
 | Repository | worktree or directory basename |
-| Branch | current git branch |
+| Branch | current git branch name |
 | Context used | latest assistant context token estimate |
 | Context remaining | model context limit minus current context estimate |
 | Context length | current model context limit |
 | Context used/total | compact used/limit display |
-| TTFT/speed | approximate time to first output and output token generation speed |
-| Subagent status | current subagent or child-session status |
-| Main agent status | current main session status |
+| TTFT/speed | approximate time to first output and output token generation speed; keeps the last complete value while a new response is still incomplete |
+| Subagent status | active subagent or child-session status; idle/completed children are omitted |
+| Main agent status | current main session status, without an `agent` prefix |
 | 5h quota | provider 5h quota used percent, when available |
 | Weekly quota | provider weekly quota used percent, when available |
-| Session input/output tokens | accumulated session input/output tokens |
-| Session total tokens | accumulated session total tokens |
+| Session input/output tokens | accumulated session and child-session input/output tokens as `<input> in / <output> out` |
+| Session total tokens | accumulated session and child-session total tokens as `<total> used`; includes reasoning/cache tokens when OpenCode exposes them |
 
 Unavailable provider/model data is omitted. For example, OpenRouter has balance and usage totals, but no 5h subscription quota window.
 
@@ -148,6 +150,13 @@ Useful commands:
 npm run typecheck
 npm test
 npm run build
+```
+
+If the local `/tmp` mount rejects Node/Vitest writes, point `TMPDIR` at an ignored project-local directory:
+
+```sh
+mkdir -p .tmp
+TMPDIR=$PWD/.tmp npm test
 ```
 
 OpenCode resolves the TUI entry from `dist/tui.tsx`, so run `npm run build` after source changes before testing in the TUI.

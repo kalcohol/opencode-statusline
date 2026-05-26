@@ -11,6 +11,7 @@ pnpm-debug.log*
 *.tsbuildinfo
 coverage/
 .cache/
+.tmp/
 
 # Local config and secrets
 .env
