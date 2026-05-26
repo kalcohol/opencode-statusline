@@ -1,0 +1,729 @@
+import { resolveApiCredential, resolveOAuthCredential, describeCredentialSource, type CredentialSource } from "./auth.js";
+import {
+  clampPercent,
+  formatMoney,
+  isRecord,
+  toFiniteNumber,
+  toNonEmptyString,
+  truncateText,
+  usedPercentFromRemaining
+} from "./format.js";
+
+export type UsageWindowKey = "fiveHour" | "daily" | "weekly" | "monthly" | "codeReview" | "other";
+
+export type UsageWindow = {
+  key: UsageWindowKey;
+  label: string;
+  used?: number;
+  total?: number;
+  unit?: string;
+  usedPercent?: number;
+  remainingPercent?: number;
+  resetAtMs?: number;
+  resetAfterMs?: number;
+};
+
+export type UsageBalance = {
+  label: string;
+  value: string;
+};
+
+export type UsageItem = {
+  label: string;
+  value: string;
+};
+
+export type UsageReport = {
+  ok: boolean;
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+  generatedAtMs: number;
+  auth?: string;
+  plan?: string;
+  windows: UsageWindow[];
+  balances: UsageBalance[];
+  items: UsageItem[];
+  error?: string;
+};
+
+export type ProviderInfoLike = {
+  id?: string;
+  name?: string;
+  key?: string;
+  options?: Record<string, unknown>;
+  models?: Record<string, unknown>;
+};
+
+type ProviderKind =
+  | "zai"
+  | "zhipu"
+  | "kimi"
+  | "minimax-cn"
+  | "deepseek"
+  | "opencode-go"
+  | "openrouter"
+  | "opencode-zen"
+  | "openai-oauth"
+  | "unknown";
+
+const USER_AGENT = "OpenCode-Statusline/0.1";
+const DEFAULT_TIMEOUT_MS = 12_000;
+const CACHE_TTL_MS = 60_000;
+const cache = new Map<string, { expiresAt: number; report: UsageReport }>();
+
+function baseReport(input: {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+  auth?: CredentialSource;
+}): UsageReport {
+  return {
+    ok: true,
+    providerID: input.providerID,
+    providerName: input.providerName,
+    modelID: input.modelID,
+    generatedAtMs: Date.now(),
+    auth: describeCredentialSource(input.auth),
+    windows: [],
+    balances: [],
+    items: []
+  };
+}
+
+function errorReport(input: {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+  auth?: CredentialSource;
+  error: string;
+}): UsageReport {
+  return {
+    ...baseReport(input),
+    ok: false,
+    error: truncateText(input.error, 220)
+  };
+}
+
+function providerKind(providerID: string): ProviderKind {
+  const id = providerID.toLowerCase();
+  if (["zai", "zai-coding-plan"].includes(id)) return "zai";
+  if (["zhipu", "zhipuai", "zhipu-coding-plan", "zhipuai-coding-plan"].includes(id)) return "zhipu";
+  if (["kimi", "kimi-code", "kimi-for-coding"].includes(id)) return "kimi";
+  if (["minimax", "minimax-china-coding-plan", "minimax-cn-coding-plan"].includes(id)) return "minimax-cn";
+  if (id === "deepseek") return "deepseek";
+  if (["opencode-go", "opencodego"].includes(id)) return "opencode-go";
+  if (id === "openrouter") return "openrouter";
+  if (id === "opencode") return "opencode-zen";
+  if (["openai", "codex", "chatgpt"].includes(id)) return "openai-oauth";
+  return "unknown";
+}
+
+function credentialMissing(providerID: string, providerName: string | undefined, modelID: string | undefined): UsageReport {
+  return errorReport({
+    providerID,
+    providerName,
+    modelID,
+    error: "No usable credential found in env, opencode config, or auth.json"
+  });
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchJson(url: string, init: RequestInit = {}): Promise<unknown> {
+  const response = await fetchWithTimeout(url, init);
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`HTTP ${response.status}: ${truncateText(body, 160)}`);
+  }
+  return response.json();
+}
+
+async function fetchText(url: string, init: RequestInit = {}): Promise<string> {
+  const response = await fetchWithTimeout(url, init);
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`HTTP ${response.status}: ${truncateText(body, 160)}`);
+  }
+  return response.text();
+}
+
+function windowFromUsage(input: {
+  key: UsageWindowKey;
+  label: string;
+  used?: unknown;
+  total?: unknown;
+  usedPercent?: unknown;
+  remainingPercent?: unknown;
+  resetAtMs?: unknown;
+  resetAfterMs?: unknown;
+  unit?: string;
+}): UsageWindow {
+  const used = toFiniteNumber(input.used);
+  const total = toFiniteNumber(input.total);
+  let usedPercent = toFiniteNumber(input.usedPercent);
+  let remainingPercent = toFiniteNumber(input.remainingPercent);
+  if (usedPercent === undefined && remainingPercent !== undefined) {
+    usedPercent = usedPercentFromRemaining(remainingPercent);
+  }
+  if (remainingPercent === undefined && usedPercent !== undefined) {
+    remainingPercent = clampPercent(100 - usedPercent);
+  }
+  if (usedPercent === undefined && used !== undefined && total !== undefined && total > 0) {
+    usedPercent = clampPercent((used / total) * 100);
+    remainingPercent = clampPercent(100 - usedPercent);
+  }
+  return {
+    key: input.key,
+    label: input.label,
+    used,
+    total,
+    usedPercent: usedPercent === undefined ? undefined : clampPercent(usedPercent),
+    remainingPercent: remainingPercent === undefined ? undefined : clampPercent(remainingPercent),
+    resetAtMs: toFiniteNumber(input.resetAtMs),
+    resetAfterMs: toFiniteNumber(input.resetAfterMs),
+    unit: input.unit
+  };
+}
+
+function resetAtFromSeconds(seconds: unknown): number | undefined {
+  const value = toFiniteNumber(seconds);
+  return value && value > 0 ? Date.now() + value * 1000 : undefined;
+}
+
+function resetAtFromUnixSeconds(seconds: unknown): number | undefined {
+  const value = toFiniteNumber(seconds);
+  return value && value > 0 ? value * 1000 : undefined;
+}
+
+function resetAtFromDate(value: unknown): number | undefined {
+  const raw = toNonEmptyString(value);
+  if (!raw) return undefined;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function parseJwtPayload(token: string): Record<string, unknown> | undefined {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return undefined;
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const parsed: unknown = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function openAIAccountID(access: string, explicit?: string): string | undefined {
+  if (explicit) return explicit;
+  const payload = parseJwtPayload(access);
+  const auth = payload?.["https://api.openai.com/auth"];
+  if (isRecord(auth)) return toNonEmptyString(auth.chatgpt_account_id);
+  return toNonEmptyString(payload?.["https://api.openai.com/auth.chatgpt_account_id"]);
+}
+
+function openAIEmail(access: string): string | undefined {
+  const payload = parseJwtPayload(access);
+  const profile = payload?.["https://api.openai.com/profile"];
+  if (isRecord(profile)) return toNonEmptyString(profile.email);
+  return toNonEmptyString(payload?.["https://api.openpi.com/profile.email"])
+    ?? toNonEmptyString(payload?.["https://api.openai.com/profile.email"]);
+}
+
+async function queryZaiLike(input: {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+  config?: unknown;
+  providerInfo?: ProviderInfoLike;
+  zhipu: boolean;
+}): Promise<UsageReport> {
+  const providerIDs = input.zhipu
+    ? ["zhipu", "zhipuai", "zhipu-coding-plan", "zhipuai-coding-plan"]
+    : ["zai", "zai-coding-plan"];
+  const credential = resolveApiCredential({
+    env: input.zhipu
+      ? ["ZHIPU_API_KEY", "ZHIPU_CODING_PLAN_API_KEY"]
+      : ["ZAI_API_KEY", "ZAI_CODING_PLAN_API_KEY", "ZHIPU_API_KEY"],
+    config: input.config,
+    providerIDs,
+    authKeys: input.zhipu
+      ? ["zhipu-coding-plan", "zhipuai-coding-plan", "zhipuai"]
+      : ["zai-coding-plan", "zai"],
+    providerInfo: input.providerInfo
+  });
+  if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
+
+  const url = input.zhipu
+    ? "https://bigmodel.cn/api/monitor/usage/quota/limit"
+    : "https://api.z.ai/api/monitor/usage/quota/limit";
+  try {
+    const payload = await fetchJson(url, {
+      headers: {
+        Authorization: credential.token,
+        "Content-Type": "application/json",
+        "User-Agent": USER_AGENT
+      }
+    });
+    const report = baseReport({ ...input, auth: credential.source });
+    report.plan = input.zhipu ? "Zhipu coding plan" : "Z.ai coding plan";
+    const data = isRecord(payload) && isRecord(payload.data) ? payload.data : {};
+    const limits = Array.isArray(data.limits) ? data.limits : [];
+    let tokenWindowCount = 0;
+    for (const raw of limits) {
+      if (!isRecord(raw)) continue;
+      const type = toNonEmptyString(raw.type);
+      const unit = toFiniteNumber(raw.unit);
+      const percentage = toFiniteNumber(raw.percentage);
+      const resetAtMs = toFiniteNumber(raw.nextResetTime);
+      if (percentage === undefined) continue;
+      if (type === "TOKENS_LIMIT") {
+        tokenWindowCount += 1;
+        if (unit === 6) {
+          report.windows.push(windowFromUsage({ key: "weekly", label: "Weekly quota", usedPercent: percentage, resetAtMs }));
+        } else if (unit === 4) {
+          report.windows.push(windowFromUsage({ key: "daily", label: "Daily quota", usedPercent: percentage, resetAtMs }));
+        } else {
+          const key = unit === 3 || tokenWindowCount === 1 ? "fiveHour" : "other";
+          const label = key === "fiveHour" ? "5h quota" : `Token quota${unit ? ` unit ${unit}` : ""}`;
+          report.windows.push(windowFromUsage({ key, label, usedPercent: percentage, resetAtMs }));
+        }
+      } else if (type === "TIME_LIMIT") {
+        report.windows.push(windowFromUsage({
+          key: "monthly",
+          label: "Monthly time quota",
+          used: raw.currentValue,
+          total: raw.usage,
+          usedPercent: percentage,
+          resetAtMs,
+          unit: "time"
+        }));
+      }
+    }
+    if (report.windows.length === 0) throw new Error("No quota windows found in response");
+    return report;
+  } catch (err) {
+    return errorReport({
+      ...input,
+      auth: credential.source,
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
+}
+
+async function queryKimi(input: {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+  config?: unknown;
+  providerInfo?: ProviderInfoLike;
+}): Promise<UsageReport> {
+  const credential = resolveApiCredential({
+    env: ["KIMI_API_KEY", "KIMI_CODE_API_KEY"],
+    config: input.config,
+    providerIDs: ["kimi-for-coding", "kimi-code", "kimi"],
+    authKeys: ["kimi-for-coding", "kimi-code", "kimi"],
+    providerInfo: input.providerInfo
+  });
+  if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
+
+  try {
+    const payload = await fetchJson("https://api.kimi.com/coding/v1/usages", {
+      headers: { Authorization: `Bearer ${credential.token}`, "User-Agent": USER_AGENT }
+    });
+    const report = baseReport({ ...input, auth: credential.source });
+    report.plan = "Kimi Code";
+    const data = isRecord(payload) && isRecord(payload.data) ? payload.data : payload;
+    const usage = isRecord(data) && isRecord(data.usage) ? data.usage : undefined;
+    if (usage) {
+      const limit = toFiniteNumber(usage.limit);
+      const used = toFiniteNumber(usage.used)
+        ?? (limit !== undefined && toFiniteNumber(usage.remaining) !== undefined
+          ? limit - (toFiniteNumber(usage.remaining) ?? 0)
+          : undefined);
+      report.windows.push(windowFromUsage({
+        key: "other",
+        label: toNonEmptyString(usage.name) ?? "Usage",
+        used,
+        total: limit,
+        resetAtMs: resetAtFromDate(usage.reset_at ?? usage.resetAt ?? usage.reset_time ?? usage.resetTime)
+      }));
+    }
+    const limits = isRecord(data) && Array.isArray(data.limits) ? data.limits : [];
+    for (let index = 0; index < limits.length; index += 1) {
+      const limit = limits[index];
+      if (!isRecord(limit)) continue;
+      const detail = isRecord(limit.detail) ? limit.detail : limit;
+      const windowInfo = isRecord(limit.window) ? limit.window : {};
+      const duration = toFiniteNumber(windowInfo.duration);
+      const unit = String(windowInfo.timeUnit ?? "").toUpperCase();
+      const key: UsageWindowKey = duration === 5 && unit.includes("HOUR") ? "fiveHour" : "other";
+      const label = key === "fiveHour" ? "5h quota" : (toNonEmptyString(limit.name) ?? `Limit ${index + 1}`);
+      const total = toFiniteNumber(detail.limit);
+      const used = toFiniteNumber(detail.used)
+        ?? (total !== undefined && toFiniteNumber(detail.remaining) !== undefined
+          ? total - (toFiniteNumber(detail.remaining) ?? 0)
+          : undefined);
+      report.windows.push(windowFromUsage({ key, label, used, total, resetAtMs: resetAtFromDate(detail.reset_at ?? detail.resetAt) }));
+    }
+    if (report.windows.length === 0) throw new Error("No usage data found in response");
+    return report;
+  } catch (err) {
+    return errorReport({ ...input, auth: credential.source, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function queryMiniMaxCN(input: {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+  config?: unknown;
+  providerInfo?: ProviderInfoLike;
+}): Promise<UsageReport> {
+  const credential = resolveApiCredential({
+    env: ["MINIMAX_CHINA_CODING_PLAN_API_KEY"],
+    config: input.config,
+    providerIDs: ["minimax-china-coding-plan", "minimax-cn-coding-plan", "minimax"],
+    authKeys: ["minimax-china-coding-plan", "minimax-cn-coding-plan"],
+    providerInfo: input.providerInfo
+  });
+  if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
+
+  try {
+    const payload = await fetchJson("https://api.minimaxi.com/v1/token_plan/remains", {
+      headers: { Authorization: `Bearer ${credential.token}`, "User-Agent": USER_AGENT }
+    });
+    if (!isRecord(payload)) throw new Error("Unexpected response shape");
+    const base = isRecord(payload.base_resp) ? payload.base_resp : {};
+    const status = toFiniteNumber(base.status_code);
+    if (status !== undefined && status !== 0) throw new Error(toNonEmptyString(base.status_msg) ?? `status_code ${status}`);
+    const remains = Array.isArray(payload.model_remains) ? payload.model_remains.filter(isRecord) : [];
+    const selected =
+      remains.find((item) => item.model_name === "MiniMax-M*")
+      ?? remains.find((item) => toNonEmptyString(item.model_name) === input.modelID)
+      ?? remains[0];
+    if (!selected) throw new Error("No model quota rows found");
+
+    const report = baseReport({ ...input, auth: credential.source });
+    report.plan = "MiniMax coding plan";
+    const modelName = toNonEmptyString(selected.model_name);
+    if (modelName) report.items.push({ label: "Quota model", value: modelName });
+    report.windows.push(windowFromUsage({
+      key: "fiveHour",
+      label: "5h quota",
+      used: selected.current_interval_usage_count,
+      total: selected.current_interval_total_count,
+      resetAfterMs: selected.remains_time
+    }));
+    report.windows.push(windowFromUsage({
+      key: "weekly",
+      label: "Weekly quota",
+      used: selected.current_weekly_usage_count,
+      total: selected.current_weekly_total_count,
+      resetAfterMs: selected.weekly_remains_time
+    }));
+    return report;
+  } catch (err) {
+    return errorReport({ ...input, auth: credential.source, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function queryDeepSeek(input: {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+  config?: unknown;
+  providerInfo?: ProviderInfoLike;
+}): Promise<UsageReport> {
+  const credential = resolveApiCredential({
+    env: ["DEEPSEEK_API_KEY"],
+    config: input.config,
+    providerIDs: ["deepseek"],
+    authKeys: ["deepseek"],
+    providerInfo: input.providerInfo
+  });
+  if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
+
+  try {
+    const payload = await fetchJson("https://api.deepseek.com/user/balance", {
+      headers: { Authorization: `Bearer ${credential.token}`, "User-Agent": USER_AGENT }
+    });
+    if (!isRecord(payload)) throw new Error("Unexpected response shape");
+    const report = baseReport({ ...input, auth: credential.source });
+    report.items.push({ label: "Available", value: String(payload.is_available === true) });
+    const balances = Array.isArray(payload.balance_infos) ? payload.balance_infos : [];
+    for (const raw of balances) {
+      if (!isRecord(raw)) continue;
+      const currency = toNonEmptyString(raw.currency)?.toUpperCase() ?? "";
+      const total = toNonEmptyString(raw.total_balance);
+      if (!currency || !total) continue;
+      report.balances.push({ label: `${currency} balance`, value: formatMoney(total, currency) ?? `${total} ${currency}` });
+      const granted = toNonEmptyString(raw.granted_balance);
+      const topped = toNonEmptyString(raw.topped_up_balance);
+      if (granted || topped) {
+        report.items.push({ label: `${currency} split`, value: `granted ${granted ?? "0"}, topped up ${topped ?? "0"}` });
+      }
+    }
+    if (report.balances.length === 0) throw new Error("No balance rows found");
+    return report;
+  } catch (err) {
+    return errorReport({ ...input, auth: credential.source, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function queryOpenRouter(input: {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+  config?: unknown;
+  providerInfo?: ProviderInfoLike;
+}): Promise<UsageReport> {
+  const credential = resolveApiCredential({
+    env: ["OPENROUTER_API_KEY"],
+    config: input.config,
+    providerIDs: ["openrouter"],
+    authKeys: ["openrouter"],
+    providerInfo: input.providerInfo
+  });
+  if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
+
+  try {
+    const payload = await fetchJson("https://openrouter.ai/api/v1/key", {
+      headers: { Authorization: `Bearer ${credential.token}`, "User-Agent": USER_AGENT }
+    });
+    const data = isRecord(payload) && isRecord(payload.data) ? payload.data : payload;
+    if (!isRecord(data)) throw new Error("Unexpected response shape");
+    const report = baseReport({ ...input, auth: credential.source });
+    const label = toNonEmptyString(data.label);
+    if (label) report.items.push({ label: "Key label", value: label });
+    const limit = toFiniteNumber(data.limit);
+    const remaining = toFiniteNumber(data.limit_remaining);
+    if (remaining !== undefined) {
+      report.balances.push({ label: "Limit remaining", value: formatMoney(remaining) ?? String(remaining) });
+    }
+    if (limit !== undefined) report.items.push({ label: "Limit", value: formatMoney(limit) ?? String(limit) });
+    if (data.limit === null) report.items.push({ label: "Limit", value: "unlimited" });
+    const limitReset = toNonEmptyString(data.limit_reset);
+    if (limitReset) report.items.push({ label: "Limit reset", value: limitReset });
+    for (const [labelText, key] of [
+      ["Usage total", "usage"],
+      ["Usage daily", "usage_daily"],
+      ["Usage weekly", "usage_weekly"],
+      ["Usage monthly", "usage_monthly"],
+      ["BYOK usage", "byok_usage"]
+    ] as const) {
+      const value = formatMoney(data[key]);
+      if (value) report.items.push({ label: labelText, value });
+    }
+    if (typeof data.is_free_tier === "boolean") report.items.push({ label: "Free tier", value: String(data.is_free_tier) });
+    return report;
+  } catch (err) {
+    return errorReport({ ...input, auth: credential.source, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+function parseScrapedWindow(html: string, name: string): { usagePercent: number; resetInSec: number } | undefined {
+  const number = String.raw`(-?\d+(?:\.\d+)?)`;
+  const pctFirst = new RegExp(String.raw`${name}:\$R\[\d+\]=\{[^}]*usagePercent:${number}[^}]*resetInSec:${number}[^}]*\}`);
+  const resetFirst = new RegExp(String.raw`${name}:\$R\[\d+\]=\{[^}]*resetInSec:${number}[^}]*usagePercent:${number}[^}]*\}`);
+  const a = pctFirst.exec(html);
+  if (a) return { usagePercent: Number(a[1]), resetInSec: Number(a[2]) };
+  const b = resetFirst.exec(html);
+  if (b) return { usagePercent: Number(b[2]), resetInSec: Number(b[1]) };
+  return undefined;
+}
+
+async function queryOpenCodeGo(input: {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+}): Promise<UsageReport> {
+  const workspaceID = toNonEmptyString(process.env.OPENCODE_GO_WORKSPACE_ID);
+  const authCookie = toNonEmptyString(process.env.OPENCODE_GO_AUTH_COOKIE);
+  if (!workspaceID || !authCookie) {
+    return errorReport({
+      ...input,
+      error: "OPENCODE_GO_WORKSPACE_ID and OPENCODE_GO_AUTH_COOKIE are required"
+    });
+  }
+  try {
+    const html = await fetchText(`https://opencode.ai/workspace/${encodeURIComponent(workspaceID)}/go`, {
+      headers: {
+        Accept: "text/html",
+        Cookie: `auth=${authCookie}`,
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
+    const report = baseReport({
+      ...input,
+      auth: { type: "env", label: "OPENCODE_GO_WORKSPACE_ID + OPENCODE_GO_AUTH_COOKIE" }
+    });
+    const rolling = parseScrapedWindow(html, "rollingUsage");
+    const weekly = parseScrapedWindow(html, "weeklyUsage");
+    const monthly = parseScrapedWindow(html, "monthlyUsage");
+    if (rolling) report.windows.push(windowFromUsage({
+      key: "fiveHour",
+      label: "5h quota",
+      usedPercent: rolling.usagePercent,
+      resetAtMs: resetAtFromSeconds(rolling.resetInSec)
+    }));
+    if (weekly) report.windows.push(windowFromUsage({
+      key: "weekly",
+      label: "Weekly quota",
+      usedPercent: weekly.usagePercent,
+      resetAtMs: resetAtFromSeconds(weekly.resetInSec)
+    }));
+    if (monthly) report.windows.push(windowFromUsage({
+      key: "monthly",
+      label: "Monthly quota",
+      usedPercent: monthly.usagePercent,
+      resetAtMs: resetAtFromSeconds(monthly.resetInSec)
+    }));
+    if (report.windows.length === 0) throw new Error("No known usage windows found in dashboard HTML");
+    return report;
+  } catch (err) {
+    return errorReport({ ...input, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function queryOpenAI(input: {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+}): Promise<UsageReport> {
+  const credential = resolveOAuthCredential(["openai", "codex", "chatgpt", "opencode"]);
+  if (!credential) {
+    return errorReport({
+      ...input,
+      error: "No OpenAI OAuth entry found in auth.json"
+    });
+  }
+  if (credential.expires && credential.expires < Date.now()) {
+    return errorReport({ ...input, auth: credential.source, error: "OpenAI OAuth token is expired" });
+  }
+  try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${credential.access}`,
+      "User-Agent": USER_AGENT
+    };
+    const accountID = openAIAccountID(credential.access, credential.accountId);
+    if (accountID) headers["ChatGPT-Account-Id"] = accountID;
+    const payload = await fetchJson("https://chatgpt.com/backend-api/wham/usage", { headers });
+    if (!isRecord(payload)) throw new Error("Unexpected response shape");
+    const report = baseReport({ ...input, auth: credential.source });
+    const planType = toNonEmptyString(payload.plan_type);
+    report.plan = planType?.toLowerCase().includes("pro")
+      ? "ChatGPT Pro"
+      : planType?.toLowerCase().includes("plus")
+        ? "ChatGPT Plus"
+        : (planType ?? "ChatGPT");
+    const email = openAIEmail(credential.access);
+    if (email) report.items.push({ label: "Account", value: email });
+    const rateLimit = isRecord(payload.rate_limit) ? payload.rate_limit : {};
+    const primary = isRecord(rateLimit.primary_window) ? rateLimit.primary_window : undefined;
+    const secondary = isRecord(rateLimit.secondary_window) ? rateLimit.secondary_window : undefined;
+    if (typeof rateLimit.limit_reached === "boolean") report.items.push({ label: "Limit reached", value: String(rateLimit.limit_reached) });
+    if (primary) {
+      report.windows.push(windowFromUsage({
+        key: "fiveHour",
+        label: "5h quota",
+        usedPercent: primary.used_percent,
+        resetAtMs: resetAtFromUnixSeconds(primary.reset_at) ?? resetAtFromSeconds(primary.reset_after_seconds)
+      }));
+    }
+    if (secondary) {
+      report.windows.push(windowFromUsage({
+        key: "weekly",
+        label: "Weekly quota",
+        usedPercent: secondary.used_percent,
+        resetAtMs: resetAtFromUnixSeconds(secondary.reset_at) ?? resetAtFromSeconds(secondary.reset_after_seconds)
+      }));
+    }
+    const codeReviewRoot = isRecord(payload.code_review_rate_limit) ? payload.code_review_rate_limit : {};
+    const codeReview = isRecord(codeReviewRoot.primary_window) ? codeReviewRoot.primary_window : undefined;
+    if (codeReview) {
+      report.windows.push(windowFromUsage({
+        key: "codeReview",
+        label: "Code review quota",
+        usedPercent: codeReview.used_percent,
+        resetAtMs: resetAtFromUnixSeconds(codeReview.reset_at) ?? resetAtFromSeconds(codeReview.reset_after_seconds)
+      }));
+    }
+    const credits = isRecord(payload.credits) ? payload.credits : undefined;
+    if (credits) {
+      if (credits.unlimited === true) report.balances.push({ label: "Credits", value: "unlimited" });
+      else if (toNonEmptyString(credits.balance)) report.balances.push({ label: "Credits", value: `$${credits.balance}` });
+      if (typeof credits.has_credits === "boolean") report.items.push({ label: "Has credits", value: String(credits.has_credits) });
+    }
+    if (report.windows.length === 0 && report.balances.length === 0) throw new Error("No usage data found in response");
+    return report;
+  } catch (err) {
+    return errorReport({ ...input, auth: credential.source, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export function findUsageWindow(report: UsageReport | undefined, key: UsageWindowKey): UsageWindow | undefined {
+  return report?.windows.find((window) => window.key === key);
+}
+
+export async function collectProviderUsage(input: {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+  config?: unknown;
+  providerInfo?: ProviderInfoLike;
+  force?: boolean;
+}): Promise<UsageReport> {
+  const kind = providerKind(input.providerID);
+  const cacheKey = `${kind}:${input.providerID}:${input.modelID ?? ""}`;
+  const cached = cache.get(cacheKey);
+  if (!input.force && cached && cached.expiresAt > Date.now()) return cached.report;
+
+  let report: UsageReport;
+  switch (kind) {
+    case "zai":
+      report = await queryZaiLike({ ...input, zhipu: false });
+      break;
+    case "zhipu":
+      report = await queryZaiLike({ ...input, zhipu: true });
+      break;
+    case "kimi":
+      report = await queryKimi(input);
+      break;
+    case "minimax-cn":
+      report = await queryMiniMaxCN(input);
+      break;
+    case "deepseek":
+      report = await queryDeepSeek(input);
+      break;
+    case "opencode-go":
+      report = await queryOpenCodeGo(input);
+      break;
+    case "openrouter":
+      report = await queryOpenRouter(input);
+      break;
+    case "openai-oauth":
+      report = await queryOpenAI(input);
+      break;
+    case "opencode-zen":
+      report = errorReport({ ...input, error: "OpenCode Zen does not expose a public balance/quota API" });
+      break;
+    default:
+      report = errorReport({ ...input, error: `Provider '${input.providerID}' has no supported usage collector` });
+      break;
+  }
+
+  cache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, report });
+  return report;
+}
+
