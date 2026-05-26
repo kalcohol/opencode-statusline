@@ -76,6 +76,7 @@ Available fields:
 | Context remaining | model context limit minus current context estimate |
 | Context length | current model context limit |
 | Context used/total | compact used/limit display |
+| TTFT/speed | approximate time to first output and output token generation speed |
 | Subagent status | current subagent or child-session status |
 | Main agent status | current main session status |
 | 5h quota | provider 5h quota used percent, when available |

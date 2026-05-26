@@ -93,6 +93,7 @@ Supported fields:
 | `context_remaining` | model context limit minus current context estimate |
 | `context_length` | current model context limit |
 | `context_window` | used/total context window |
+| `generation_metrics` | approximate TTFT and output token generation speed |
 | `subagent_status` | parent/child subagent state |
 | `agent_status` | main session status |
 | `quota_5h` | provider 5h quota used percent |
@@ -102,11 +103,14 @@ Supported fields:
 
 Unavailable values are omitted. For example, OpenRouter has balance/usage data but no 5h subscription quota window, so `quota_5h` does not render for OpenRouter.
 
+`generation_metrics` is approximate because OpenCode exposes message and part timestamps rather than a provider-native TTFT field. The plugin computes TTFT from assistant message creation to the first text/reasoning/tool part start, and computes generation speed from output tokens over text/reasoning part duration.
+
 TUI rendering uses colored segments:
 
 - repo: normal text
 - branch: info
 - context: accent/success/secondary
+- generation metrics: info
 - agent/subagent: primary
 - quota: warning
 - session token totals: secondary

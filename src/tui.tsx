@@ -417,6 +417,8 @@ function statuslineSegmentColor(theme: TuiPluginApi["theme"]["current"], segment
       return theme.secondary;
     case "context_window":
       return theme.accent;
+    case "generation_metrics":
+      return theme.info;
     case "subagent_status":
       return theme.primary;
     case "agent_status":
@@ -504,6 +506,12 @@ function StatuslineView(props: {
     }),
     props.api.event.on("message.updated", (event) => {
       if ((event as any).properties?.info?.sessionID === props.sessionID) queueReload();
+    }),
+    props.api.event.on("message.part.updated", (event) => {
+      if ((event as any).properties?.part?.sessionID === props.sessionID) queueReload();
+    }),
+    props.api.event.on("message.part.delta", (event) => {
+      if ((event as any).properties?.sessionID === props.sessionID) queueReload();
     }),
     props.api.event.on("message.removed", (event) => {
       if ((event as any).properties?.sessionID === props.sessionID) queueReload();

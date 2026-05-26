@@ -29,6 +29,7 @@ type TuiApiLike = {
       messages: (sessionID: string) => ReadonlyArray<unknown>;
       status: (sessionID: string) => unknown;
     };
+    part?: (messageID: string) => ReadonlyArray<unknown>;
   };
   client?: {
     session?: {
@@ -49,6 +50,11 @@ type TokenTotals = {
   cacheRead: number;
   cacheWrite: number;
   total: number;
+};
+
+type GenerationMetrics = {
+  ttftMs?: number;
+  tokensPerSecond?: number;
 };
 
 export type TuiStatuslinePart = {
@@ -175,6 +181,103 @@ function modelContextLimit(provider: ProviderInfoLike | undefined, modelID: stri
   return toFiniteNumber(model.limit.context);
 }
 
+function timestampMs(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const raw = toNonEmptyString(value);
+  if (!raw) return undefined;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric)) return numeric;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function messageTimeMs(message: Record<string, unknown>, key: "created" | "completed"): number | undefined {
+  const time = isRecord(message.time) ? message.time : undefined;
+  return timestampMs(time?.[key]) ?? timestampMs(message[`${key}At`]);
+}
+
+function partStartMs(part: Record<string, unknown>): number | undefined {
+  const time = isRecord(part.time) ? part.time : undefined;
+  const state = isRecord(part.state) ? part.state : undefined;
+  const stateTime = isRecord(state?.time) ? state.time : undefined;
+  return timestampMs(time?.start) ?? timestampMs(stateTime?.start);
+}
+
+function partEndMs(part: Record<string, unknown>): number | undefined {
+  const time = isRecord(part.time) ? part.time : undefined;
+  const state = isRecord(part.state) ? part.state : undefined;
+  const stateTime = isRecord(state?.time) ? state.time : undefined;
+  return timestampMs(time?.end) ?? timestampMs(stateTime?.end);
+}
+
+function latestAssistantMessage(messages: readonly unknown[]): Record<string, unknown> | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (isRecord(message) && message.role === "assistant") return message;
+  }
+  return undefined;
+}
+
+function latestGenerationMetrics(api: TuiApiLike, messages: readonly unknown[]): GenerationMetrics | undefined {
+  const message = latestAssistantMessage(messages);
+  const messageID = toNonEmptyString(message?.id);
+  if (!message || !messageID || !api.state.part) return undefined;
+
+  const created = messageTimeMs(message, "created");
+  const completed = messageTimeMs(message, "completed");
+  const parts = api.state.part(messageID).filter(isRecord);
+  const firstOutputStart = parts
+    .filter((part) => ["text", "reasoning", "tool"].includes(toNonEmptyString(part.type) ?? ""))
+    .map(partStartMs)
+    .filter((value): value is number => value !== undefined)
+    .sort((left, right) => left - right)[0];
+
+  const generatedParts = parts.filter((part) => ["text", "reasoning"].includes(toNonEmptyString(part.type) ?? ""));
+  const generationStart = generatedParts
+    .map(partStartMs)
+    .filter((value): value is number => value !== undefined)
+    .sort((left, right) => left - right)[0] ?? firstOutputStart ?? created;
+  const generationEnd = Math.max(
+    0,
+    ...generatedParts
+      .map(partEndMs)
+      .filter((value): value is number => value !== undefined)
+  ) || completed;
+
+  const tokens = messageTokens(message);
+  const ttftMs = created !== undefined && firstOutputStart !== undefined
+    ? Math.max(0, firstOutputStart - created)
+    : undefined;
+  const durationSeconds = generationStart !== undefined && generationEnd !== undefined && generationEnd > generationStart
+    ? (generationEnd - generationStart) / 1000
+    : undefined;
+  const tokensPerSecond = durationSeconds && tokens.output > 0 ? tokens.output / durationSeconds : undefined;
+
+  if (ttftMs === undefined && tokensPerSecond === undefined) return undefined;
+  return { ttftMs, tokensPerSecond };
+}
+
+function formatLatencyMs(value: number): string {
+  if (value < 1000) return `${Math.round(value)}ms`;
+  const seconds = value / 1000;
+  if (seconds < 10) return `${seconds.toFixed(1).replace(/\.0$/, "")}s`;
+  return `${Math.round(seconds)}s`;
+}
+
+function formatTokensPerSecond(value: number): string {
+  if (value >= 100) return String(Math.round(value));
+  if (value >= 10) return value.toFixed(1).replace(/\.0$/, "");
+  return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function generationMetricsText(metrics: GenerationMetrics | undefined): string | undefined {
+  if (!metrics) return undefined;
+  const parts: string[] = [];
+  if (metrics.ttftMs !== undefined) parts.push(`ttft ${formatLatencyMs(metrics.ttftMs)}`);
+  if (metrics.tokensPerSecond !== undefined) parts.push(`gen ${formatTokensPerSecond(metrics.tokensPerSecond)} tok/s`);
+  return parts.length ? parts.join(" ") : undefined;
+}
+
 function sessionStatusLabel(status: unknown): string | undefined {
   if (!isRecord(status)) return undefined;
   const type = toNonEmptyString(status.type);
@@ -236,6 +339,7 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
   const contextUsed = latestContextTokens(messages);
   const contextLimit = modelContextLimit(provider, meta.modelID);
   const sessionTokens = sessionTokenTotals(messages);
+  const generationMetrics = latestGenerationMetrics(api, messages);
 
   let quotaReport;
   if (meta.providerID && (fields.includes("quota_5h") || fields.includes("quota_weekly"))) {
@@ -261,6 +365,7 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
       provider,
       contextUsed,
       contextLimit,
+      generationMetrics,
       sessionTokens,
       quotaReport
     });
@@ -282,6 +387,7 @@ async function renderField(input: {
   provider?: ProviderInfoLike;
   contextUsed: number;
   contextLimit?: number;
+  generationMetrics?: GenerationMetrics;
   sessionTokens: TokenTotals;
   quotaReport?: Awaited<ReturnType<typeof collectProviderUsage>>;
 }): Promise<string | undefined> {
@@ -304,6 +410,8 @@ async function renderField(input: {
       return input.contextLimit === undefined
         ? undefined
         : `ctx ${formatTokenAmount(input.contextUsed)}/${formatTokenAmount(input.contextLimit)}`;
+    case "generation_metrics":
+      return generationMetricsText(input.generationMetrics);
     case "subagent_status":
       return subagentText(input.api, input.sessionID);
     case "agent_status": {

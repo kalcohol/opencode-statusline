@@ -32,6 +32,44 @@ function apiWithContextLimit(context: number | undefined) {
   };
 }
 
+function apiWithGenerationMetrics() {
+  const message = {
+    id: "msg_1",
+    role: "assistant",
+    time: { created: 1_000, completed: 4_000 },
+    tokens: {
+      input: 10,
+      output: 80,
+      reasoning: 0,
+      cache: { read: 0, write: 0 }
+    }
+  };
+  const partsByMessage: Record<string, unknown[]> = {
+    msg_1: [
+      {
+        id: "prt_1",
+        type: "text",
+        time: { start: 1_600, end: 3_600 },
+        text: "hello"
+      }
+    ]
+  };
+  return {
+    state: {
+      config: { model: "openrouter/model-a" },
+      provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+      path: { worktree: "", directory: "" },
+      vcs: undefined,
+      session: {
+        get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+        messages: () => [message],
+        status: () => ({ type: "idle" })
+      },
+      part: (messageID: string) => partsByMessage[messageID] ?? []
+    }
+  };
+}
+
 describe("buildTuiStatusline", () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-statusline-"));
@@ -57,5 +95,11 @@ describe("buildTuiStatusline", () => {
     fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["context_length"] }));
 
     await expect(buildTuiStatusline(apiWithContextLimit(undefined) as any, "ses_1")).resolves.toBe("");
+  });
+
+  it("renders TTFT and generation speed from message and part timing", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["generation_metrics"] }));
+
+    await expect(buildTuiStatusline(apiWithGenerationMetrics() as any, "ses_1")).resolves.toBe("ttft 600ms gen 40 tok/s");
   });
 });
