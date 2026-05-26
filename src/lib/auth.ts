@@ -56,6 +56,16 @@ export function getOpencodeDataDir(): string {
   return path.join(os.homedir(), ".local", "share", "opencode");
 }
 
+export function getOpencodeStateDir(): string {
+  if (process.env.OPENCODE_STATUSLINE_STATE_DIR) return process.env.OPENCODE_STATUSLINE_STATE_DIR;
+  if (process.env.XDG_STATE_HOME) return path.join(process.env.XDG_STATE_HOME, "opencode");
+  if (process.platform === "win32") {
+    const root = process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir();
+    return path.join(root, "opencode", "state");
+  }
+  return path.join(os.homedir(), ".local", "state", "opencode");
+}
+
 export function getAuthJsonPath(): string {
   if (process.env.OPENCODE_AUTH_JSON) return process.env.OPENCODE_AUTH_JSON;
   const candidates = process.platform === "win32"
@@ -165,4 +175,3 @@ export function describeCredentialSource(source: CredentialSource | undefined): 
   if (source.type === "env") return `env:${source.label}`;
   return source.label;
 }
-

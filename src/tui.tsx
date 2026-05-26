@@ -26,8 +26,12 @@ function onConfigChanged(listener: () => void): () => void {
   return () => configListeners.delete(listener);
 }
 
-function StatuslineDialog(props: { api: TuiPluginApi }): JSX.Element {
-  const [fields, setFields] = createSignal<StatuslineFieldID[]>(loadStatuslineConfig().fields);
+function StatuslineDialog(props: {
+  api: TuiPluginApi;
+  initialFields?: StatuslineFieldID[];
+  current?: StatuslineFieldID;
+}): JSX.Element {
+  const [fields, setFields] = createSignal<StatuslineFieldID[]>(props.initialFields ?? loadStatuslineConfig().fields);
 
   const toggle = (field: StatuslineFieldID) => {
     const current = fields();
@@ -38,6 +42,9 @@ function StatuslineDialog(props: { api: TuiPluginApi }): JSX.Element {
     setFields(normalized);
     saveStatuslineConfig({ version: 1, fields: normalized });
     notifyConfigChanged();
+    setTimeout(() => {
+      props.api.ui.dialog.replace(() => <StatuslineDialog api={props.api} initialFields={normalized} current={field} />);
+    }, 0);
   };
 
   const options = () =>
@@ -58,6 +65,7 @@ function StatuslineDialog(props: { api: TuiPluginApi }): JSX.Element {
       placeholder="Search fields"
       options={options()}
       skipFilter={false}
+      current={props.current}
     />
   );
 }

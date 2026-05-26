@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+import { getOpencodeStateDir } from "./auth.js";
 import { collectProviderUsage, type ProviderInfoLike, type UsageReport } from "./providers.js";
 import { sanitizeDisplayText, toNonEmptyString, isRecord } from "./format.js";
 
@@ -20,6 +23,13 @@ export type ModelMeta = {
   providerID: string;
   modelID?: string;
 };
+
+type RecentModelState = {
+  model: ModelMeta;
+  mtimeMs: number;
+};
+
+const PLUGIN_STARTED_AT_MS = Date.now();
 
 function unwrapData(value: unknown): unknown {
   return isRecord(value) && "data" in value ? value.data : value;
@@ -102,26 +112,104 @@ function modelFromMessage(message: Record<string, unknown>): ModelMeta | undefin
   return providerID ? { providerID, modelID } : undefined;
 }
 
+function timestampMs(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const raw = toNonEmptyString(value);
+  if (!raw) return undefined;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric)) return numeric;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function recordTimestampMs(record: Record<string, unknown>): number | undefined {
+  const time = isRecord(record.time) ? record.time : undefined;
+  const candidates = [
+    timestampMs(time?.updated),
+    timestampMs(time?.created),
+    timestampMs(record.updatedAt),
+    timestampMs(record.createdAt),
+    timestampMs(record.updated),
+    timestampMs(record.created)
+  ].filter((value): value is number => value !== undefined);
+  return candidates.length ? Math.max(...candidates) : undefined;
+}
+
+function latestActivityMs(session: Record<string, unknown>, messages: readonly Record<string, unknown>[]): number | undefined {
+  const candidates = [
+    recordTimestampMs(session),
+    ...messages.map((message) => recordTimestampMs(message))
+  ].filter((value): value is number => value !== undefined);
+  return candidates.length ? Math.max(...candidates) : undefined;
+}
+
+function providerHasModel(providers: readonly ProviderInfoLike[] | undefined, model: ModelMeta): boolean {
+  if (!providers?.length) return true;
+  const provider = providers.find((item) => item.id === model.providerID);
+  if (!provider) return false;
+  if (!model.modelID || !isRecord(provider.models)) return true;
+  return model.modelID in provider.models;
+}
+
+function modelFromStateEntry(entry: unknown): ModelMeta | undefined {
+  if (!isRecord(entry)) return undefined;
+  const providerID = toNonEmptyString(entry.providerID);
+  const modelID = toNonEmptyString(entry.modelID) ?? toNonEmptyString(entry.id);
+  return providerID ? { providerID, modelID } : undefined;
+}
+
+function readRecentModelState(providers?: readonly ProviderInfoLike[]): RecentModelState | undefined {
+  try {
+    const file = path.join(getOpencodeStateDir(), "model.json");
+    const stat = fs.statSync(file);
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!isRecord(parsed) || !Array.isArray(parsed.recent)) return undefined;
+    for (const entry of parsed.recent) {
+      const model = modelFromStateEntry(entry);
+      if (model && providerHasModel(providers, model)) return { model, mtimeMs: stat.mtimeMs };
+    }
+  } catch {
+    // The file only exists after the TUI model picker has written recent models.
+  }
+  return undefined;
+}
+
+export function readRecentModelFromState(providers?: readonly ProviderInfoLike[]): ModelMeta | undefined {
+  return readRecentModelState(providers)?.model;
+}
+
 export async function resolveActiveModel(input: {
   client: MinimalOpencodeClient;
   sessionID: string;
   config?: Record<string, unknown>;
   commandModel?: unknown;
+  providers?: readonly ProviderInfoLike[];
 }): Promise<ModelMeta | undefined> {
   const commandModel = parseModelString(input.commandModel);
   if (commandModel) return commandModel;
 
+  const configModel = parseModelString(input.config?.model);
   const session = await getSessionData(input.client, input.sessionID);
+  const messages = await getSessionMessages(input.client, input.sessionID);
+  const recentModel = readRecentModelState(input.providers);
+  const activityMs = latestActivityMs(session, messages);
+  const recentIsCurrentRunSelection = recentModel && recentModel.mtimeMs + 1_000 >= PLUGIN_STARTED_AT_MS;
+  const recentIsAfterSessionActivity = recentModel && (activityMs === undefined || recentModel.mtimeMs + 1_000 >= activityMs);
+  if (recentModel && recentIsAfterSessionActivity && (!configModel || recentIsCurrentRunSelection)) {
+    return recentModel.model;
+  }
+
   const sessionModel = modelFromMessage(session);
   if (sessionModel) return sessionModel;
 
-  const messages = await getSessionMessages(input.client, input.sessionID);
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const meta = modelFromMessage(messages[index]);
     if (meta) return meta;
   }
 
-  return parseModelString(input.config?.model);
+  if (configModel) return configModel;
+
+  return undefined;
 }
 
 export async function injectIgnoredText(
@@ -160,15 +248,16 @@ export async function buildCurrentProviderUsageReport(input: {
   commandModel?: unknown;
 }): Promise<{ report?: UsageReport; model?: ModelMeta; config: Record<string, unknown> }> {
   const config = await getConfigData(input.client);
+  const providers = await getConfiguredProviders(input.client);
   const model = await resolveActiveModel({
     client: input.client,
     sessionID: input.sessionID,
     config,
-    commandModel: input.commandModel
+    commandModel: input.commandModel,
+    providers
   });
   if (!model) return { config };
 
-  const providers = await getConfiguredProviders(input.client);
   const providerInfo = providers.find((provider) => provider.id === model.providerID);
   const report = await collectProviderUsage({
     providerID: model.providerID,
@@ -180,4 +269,3 @@ export async function buildCurrentProviderUsageReport(input: {
   });
   return { report, model, config };
 }
-

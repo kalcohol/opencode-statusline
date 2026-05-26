@@ -38,11 +38,7 @@ Yes, build first. OpenCode resolves the server entry from `dist/index.js` and th
 3. Add this repository path to both OpenCode config files using your own local path.
 4. Restart the OpenCode TUI.
 5. Run `/usage` in a session to verify ignored, no-reply usage output.
-6. Run `/statusline` to open the TUI field picker, or use the manual form:
-
-```text
-/statusline repo branch context_window quota_5h session_total
-```
+6. Run `/statusline` to open the TUI field picker.
 
 The statusline updates after selection changes, session/message events, and periodically while the TUI is open.
 
@@ -85,3 +81,4 @@ OpenCode also reads `opencode.json(c)` and `tui.json(c)` while walking up from t
 ```
 
 The statusline selection is stored at `~/.local/share/opencode/statusline-plugin.json` by default. Override it with `OPENCODE_STATUSLINE_CONFIG`.
+For `/usage` after a TUI model switch, the plugin reads OpenCode's recent model state at `${XDG_STATE_HOME:-~/.local/state}/opencode/model.json`. Override that directory with `OPENCODE_STATUSLINE_STATE_DIR`.

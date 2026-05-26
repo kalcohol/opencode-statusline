@@ -1,9 +1,7 @@
-import { describeCredentialSource } from "./auth.js";
 import {
   formatPercent,
   formatReset,
-  sanitizeDisplayText,
-  toNonEmptyString
+  sanitizeDisplayText
 } from "./format.js";
 import type { UsageReport, UsageWindow } from "./providers.js";
 
@@ -56,24 +54,3 @@ export function formatUsageReport(report: UsageReport | undefined): string {
 
   return sanitizeDisplayText(lines.join("\n"));
 }
-
-export function formatStatuslineManualHelp(input: {
-  currentFields: readonly { id: string; label: string }[];
-  availableFields: readonly { id: string; label: string }[];
-  saved?: boolean;
-  unknown?: readonly string[];
-}): string {
-  const lines: string[] = [];
-  lines.push(input.saved ? "Statusline updated" : "Statusline");
-  lines.push("");
-  lines.push(`Current: ${input.currentFields.length ? input.currentFields.map((field) => field.id).join(" ") : "(empty)"}`);
-  lines.push(`Available: ${input.availableFields.map((field) => field.id).join(" ")}`);
-  lines.push("");
-  lines.push("Manual form: /statusline repo branch context_window quota_5h session_total");
-  lines.push("Clear: /statusline clear");
-  if (input.unknown?.length) lines.push(`Unknown: ${input.unknown.map((item) => toNonEmptyString(item)).filter(Boolean).join(", ")}`);
-  return lines.join("\n");
-}
-
-export { describeCredentialSource };
-
