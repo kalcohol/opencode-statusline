@@ -1,4 +1,5 @@
 import { collectProviderUsage, findUsageWindow, type ProviderInfoLike } from "./providers.js";
+import { resolveActiveModel, type MinimalOpencodeClient } from "./opencode-client.js";
 import {
   basename,
   formatPercent,
@@ -9,11 +10,14 @@ import {
 } from "./format.js";
 import { loadStatuslineConfig, type StatuslineFieldID } from "./statusline-config.js";
 
+const STATUSLINE_QUOTA_TIMEOUT_MS = 1_000;
+
 type TuiApiLike = {
   state: {
     config: unknown;
     provider: ReadonlyArray<ProviderInfoLike>;
     path: {
+      state?: string;
       worktree?: string;
       directory?: string;
     };
@@ -77,7 +81,21 @@ function modelFromMessage(message: unknown): ModelMeta {
   };
 }
 
-function resolveTuiModel(api: TuiApiLike, sessionID: string): ModelMeta {
+async function resolveTuiModel(api: TuiApiLike, sessionID: string): Promise<ModelMeta> {
+  const client: MinimalOpencodeClient = {
+    session: {
+      get: async () => api.state.session.get(sessionID),
+      messages: async () => api.state.session.messages(sessionID)
+    }
+  };
+  const resolved = await resolveActiveModel({
+    client,
+    sessionID,
+    config: isRecord(api.state.config) ? api.state.config : {},
+    providers: api.state.provider
+  });
+  if (resolved) return resolved;
+
   const sessionMeta = modelFromSession(api.state.session.get(sessionID));
   if (sessionMeta.providerID || sessionMeta.modelID) return sessionMeta;
 
@@ -88,6 +106,22 @@ function resolveTuiModel(api: TuiApiLike, sessionID: string): ModelMeta {
   }
 
   return parseConfigModel(api.state.config);
+}
+
+function withTimeout<Value>(promise: Promise<Value>, ms: number): Promise<Value | undefined> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(undefined);
+      }
+    );
+  });
 }
 
 function messageTokens(message: unknown): TokenTotals {
@@ -192,7 +226,7 @@ export async function buildTuiStatusline(api: TuiApiLike, sessionID: string): Pr
   if (fields.length === 0) return "";
 
   const messages = api.state.session.messages(sessionID);
-  const meta = resolveTuiModel(api, sessionID);
+  const meta = await resolveTuiModel(api, sessionID);
   const provider = api.state.provider.find((item) => item.id === meta.providerID);
   const contextUsed = latestContextTokens(messages);
   const contextLimit = modelContextLimit(provider, meta.modelID);
@@ -200,14 +234,17 @@ export async function buildTuiStatusline(api: TuiApiLike, sessionID: string): Pr
 
   let quotaReport;
   if (meta.providerID && (fields.includes("quota_5h") || fields.includes("quota_weekly"))) {
-    quotaReport = await collectProviderUsage({
-      providerID: meta.providerID,
-      providerName: toNonEmptyString(provider?.name),
-      modelID: meta.modelID,
-      config: api.state.config,
-      providerInfo: provider
-    });
-    if (!quotaReport.ok) quotaReport = undefined;
+    quotaReport = await withTimeout(
+      collectProviderUsage({
+        providerID: meta.providerID,
+        providerName: toNonEmptyString(provider?.name),
+        modelID: meta.modelID,
+        config: api.state.config,
+        providerInfo: provider
+      }),
+      STATUSLINE_QUOTA_TIMEOUT_MS
+    );
+    if (quotaReport && !quotaReport.ok) quotaReport = undefined;
   }
 
   const parts: string[] = [];

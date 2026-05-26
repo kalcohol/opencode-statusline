@@ -1,8 +1,8 @@
 # opencode-statusline
 
-Small OpenCode plugin for:
+Small OpenCode TUI plugin for:
 
-- `/usage`: show usage/quota info for the current session provider without adding it to model context.
+- `/usage`: show usage/quota info for the current session provider in a dialog without adding it to model context.
 - `/statusline`: configure extra fields shown on the prompt status line.
 
 ## Structure
@@ -10,13 +10,14 @@ Small OpenCode plugin for:
 ```text
 src/
   index.ts                 package server entry
-  plugin.ts                slash command hooks
+  plugin.ts                empty server shim
   tui.tsx                  TUI slots and interactive statusline picker
   lib/
     auth.ts                env/config/auth.json credential lookup
     opencode-client.ts     OpenCode SDK compatibility helpers
     providers.ts           provider usage collectors
     statusline.ts          TUI statusline renderer
+    tui-usage.ts           TUI /usage dialog renderer
     statusline-config.ts   persisted field selection
     usage-format.ts        command output formatting
     format.ts              shared format helpers
@@ -31,20 +32,20 @@ npm run build
 
 ## Local test
 
-Yes, build first. OpenCode resolves the server entry from `dist/index.js` and the TUI entry from `dist/tui.tsx`.
+Yes, build first. OpenCode resolves the TUI entry from `dist/tui.tsx`.
 
 1. Run `npm install` once.
 2. Run `npm run build` after source changes.
-3. Add this repository path to both OpenCode config files using your own local path.
+3. Add this repository path to `tui.json` using your own local path. Keeping it in `opencode.json` is harmless but no longer required.
 4. Restart the OpenCode TUI.
-5. Run `/usage` in a session to verify ignored, no-reply usage output.
+5. Run `/usage` in a session to verify the usage dialog opens without sending a model request.
 6. Run `/statusline` to open the TUI field picker.
 
 The statusline updates after selection changes, session/message events, and periodically while the TUI is open.
 
 ## OpenCode config
 
-Add the package/path as both a server and TUI plugin so `/usage` can inject ignored output and the statusline can render in the prompt.
+Add the package/path as a TUI plugin so `/usage` and `/statusline` are handled before they enter chat context.
 
 Default global locations:
 
@@ -62,7 +63,7 @@ Project-local locations are also supported. The `.opencode/` form keeps OpenCode
 
 OpenCode also reads `opencode.json(c)` and `tui.json(c)` while walking up from the current project directory. If `OPENCODE_CONFIG_DIR` is set, use that directory instead of the global default.
 
-`opencode.json` or `opencode.jsonc`:
+`opencode.json` or `opencode.jsonc` is not required for the current plugin, but keeping the same package path there is harmless:
 
 ```jsonc
 {

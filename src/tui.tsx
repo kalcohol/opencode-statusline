@@ -3,6 +3,7 @@ import type { JSX } from "@opentui/solid";
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui";
 import { Show, createEffect, createSignal, onCleanup } from "solid-js";
 import { buildTuiStatusline } from "./lib/statusline.js";
+import { buildTuiUsageText } from "./lib/tui-usage.js";
 import {
   STATUSLINE_FIELDS,
   loadStatuslineConfig,
@@ -72,6 +73,31 @@ function StatuslineDialog(props: {
 
 function openStatuslineDialog(api: TuiPluginApi): void {
   api.ui.dialog.replace(() => <StatuslineDialog api={api} />);
+}
+
+function currentSessionID(api: TuiPluginApi): string | undefined {
+  const route = api.route.current;
+  if (route.name !== "session") return undefined;
+  return typeof route.params?.sessionID === "string" ? route.params.sessionID : undefined;
+}
+
+function showUsageDialog(api: TuiPluginApi, message: string): void {
+  api.ui.dialog.replace(() => <api.ui.DialogAlert title="OpenCode Usage" message={message} />);
+}
+
+function openUsageDialog(api: TuiPluginApi): void {
+  const sessionID = currentSessionID(api);
+  if (!sessionID) {
+    showUsageDialog(api, "Open a session before running /usage.");
+    return;
+  }
+  showUsageDialog(api, "Loading usage...");
+  void buildTuiUsageText(api, sessionID)
+    .then((message) => showUsageDialog(api, message))
+    .catch((err) => {
+      const message = err instanceof Error && err.message ? err.message : "Could not load usage.";
+      showUsageDialog(api, `Usage unavailable\n\n${message}`);
+    });
 }
 
 function StatuslineView(props: { api: TuiPluginApi; sessionID: string }): JSX.Element {
@@ -149,6 +175,17 @@ const tui: TuiPlugin = async (api) => {
 
   api.keymap.registerLayer({
     commands: [
+      {
+        namespace: "palette",
+        name: "opencode-statusline.usage",
+        title: "Provider usage",
+        desc: "Show current provider usage without adding it to model context",
+        category: "System",
+        slashName: "usage",
+        run() {
+          openUsageDialog(api);
+        }
+      },
       {
         namespace: "palette",
         name: "opencode-statusline.configure",
