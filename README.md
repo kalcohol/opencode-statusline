@@ -50,6 +50,22 @@ The statusline updates after selection changes, session/message events, and peri
 
 Add the package/path as both a server and TUI plugin so `/usage` can inject ignored output and the statusline can render in the prompt.
 
+Default global locations:
+
+```text
+${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.jsonc
+${XDG_CONFIG_HOME:-~/.config}/opencode/tui.jsonc
+```
+
+Project-local locations are also supported. The `.opencode/` form keeps OpenCode config out of the repository root:
+
+```text
+<project>/.opencode/opencode.jsonc
+<project>/.opencode/tui.jsonc
+```
+
+OpenCode also reads `opencode.json(c)` and `tui.json(c)` while walking up from the current project directory. If `OPENCODE_CONFIG_DIR` is set, use that directory instead of the global default.
+
 `opencode.json` or `opencode.jsonc`:
 
 ```jsonc
