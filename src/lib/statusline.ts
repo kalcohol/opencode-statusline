@@ -51,6 +51,11 @@ type TokenTotals = {
   total: number;
 };
 
+export type TuiStatuslinePart = {
+  field: StatuslineFieldID;
+  text: string;
+};
+
 function parseConfigModel(config: unknown): ModelMeta {
   if (!isRecord(config)) return {};
   const raw = toNonEmptyString(config.model);
@@ -221,9 +226,9 @@ function quotaText(window: ReturnType<typeof findUsageWindow>, label: string): s
   return `${label} ${formatPercent(window.usedPercent)}`;
 }
 
-export async function buildTuiStatusline(api: TuiApiLike, sessionID: string): Promise<string> {
+export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string): Promise<TuiStatuslinePart[]> {
   const fields = loadStatuslineConfig().fields;
-  if (fields.length === 0) return "";
+  if (fields.length === 0) return [];
 
   const messages = api.state.session.messages(sessionID);
   const meta = await resolveTuiModel(api, sessionID);
@@ -247,7 +252,7 @@ export async function buildTuiStatusline(api: TuiApiLike, sessionID: string): Pr
     if (quotaReport && !quotaReport.ok) quotaReport = undefined;
   }
 
-  const parts: string[] = [];
+  const parts: TuiStatuslinePart[] = [];
   for (const field of fields) {
     const text = await renderField({
       api,
@@ -259,10 +264,15 @@ export async function buildTuiStatusline(api: TuiApiLike, sessionID: string): Pr
       sessionTokens,
       quotaReport
     });
-    if (text) parts.push(text);
+    if (text) parts.push({ field, text });
   }
 
-  return parts.join(" | ");
+  return parts;
+}
+
+export async function buildTuiStatusline(api: TuiApiLike, sessionID: string): Promise<string> {
+  const parts = await buildTuiStatuslineParts(api, sessionID);
+  return parts.map((part) => part.text).join(" | ");
 }
 
 async function renderField(input: {
@@ -286,6 +296,10 @@ async function renderField(input: {
       return input.contextLimit === undefined
         ? undefined
         : `ctx left ${formatTokenAmount(Math.max(0, input.contextLimit - input.contextUsed))}`;
+    case "context_length":
+      return input.contextLimit === undefined
+        ? undefined
+        : `ctx max ${formatTokenAmount(input.contextLimit)}`;
     case "context_window":
       return input.contextLimit === undefined
         ? undefined

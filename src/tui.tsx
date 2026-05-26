@@ -4,7 +4,7 @@ import type { JSX } from "@opentui/solid";
 import { useTerminalDimensions } from "@opentui/solid";
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { buildTuiStatusline } from "./lib/statusline.js";
+import { buildTuiStatuslineParts } from "./lib/statusline.js";
 import { buildTuiUsageText } from "./lib/tui-usage.js";
 import { readRecentModelStateFromFile } from "./lib/opencode-client.js";
 import type { ProviderInfoLike } from "./lib/providers.js";
@@ -30,6 +30,7 @@ const PROMPT_ROW_GAP = 1;
 const RIGHT_CONTENT_GAP = 1;
 const STATUSLINE_SAFETY_COLUMNS = 2;
 const MIN_STATUSLINE_COLUMNS = 8;
+const STATUSLINE_SEPARATOR = " | ";
 const configListeners = new Set<() => void>();
 let usageDialogOpen = false;
 
@@ -197,6 +198,15 @@ type PromptModelMeta = {
   modelID?: string;
 };
 
+type StatuslineDisplayPart = {
+  field?: StatuslineFieldID;
+  text: string;
+};
+
+type StatuslineSegment = StatuslineDisplayPart & {
+  separator?: boolean;
+};
+
 function displayColumns(value: string): number {
   let width = 0;
   for (const char of value) {
@@ -219,21 +229,58 @@ function displayColumns(value: string): number {
   return width;
 }
 
-function truncateColumns(value: string, maxColumns: number): string {
-  if (maxColumns < MIN_STATUSLINE_COLUMNS) return "";
-  const cleaned = sanitizeDisplayText(value).replace(/\s+/g, " ").trim();
-  if (displayColumns(cleaned) <= maxColumns) return cleaned;
-  const suffix = "...";
-  const contentColumns = Math.max(0, maxColumns - displayColumns(suffix));
+function takeColumns(value: string, maxColumns: number): string {
   let used = 0;
   let output = "";
-  for (const char of cleaned) {
+  for (const char of value) {
     const width = displayColumns(char);
-    if (used + width > contentColumns) break;
+    if (used + width > maxColumns) break;
     output += char;
     used += width;
   }
-  return output ? `${output}${suffix}` : "";
+  return output;
+}
+
+function statuslineSegments(parts: readonly StatuslineDisplayPart[]): StatuslineSegment[] {
+  const segments: StatuslineSegment[] = [];
+  for (const part of parts) {
+    const text = sanitizeDisplayText(part.text).replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    if (segments.length > 0) segments.push({ text: STATUSLINE_SEPARATOR, separator: true });
+    segments.push({ field: part.field, text });
+  }
+  return segments;
+}
+
+function segmentsColumns(segments: readonly StatuslineSegment[]): number {
+  return segments.reduce((total, segment) => total + displayColumns(segment.text), 0);
+}
+
+function truncateStatuslineSegments(parts: readonly StatuslineDisplayPart[], maxColumns: number): StatuslineSegment[] {
+  if (maxColumns < MIN_STATUSLINE_COLUMNS) return [];
+  const segments = statuslineSegments(parts);
+  if (segmentsColumns(segments) <= maxColumns) return segments;
+
+  const suffix = "...";
+  let remaining = maxColumns - displayColumns(suffix);
+  const result: StatuslineSegment[] = [];
+  for (const segment of segments) {
+    if (remaining <= 0) break;
+    const width = displayColumns(segment.text);
+    if (width <= remaining) {
+      result.push(segment);
+      remaining -= width;
+      continue;
+    }
+    if (segment.separator) break;
+    const text = takeColumns(segment.text, remaining);
+    if (text) result.push({ ...segment, text });
+    break;
+  }
+
+  if (result.length === 0) return [];
+  result.push({ text: suffix, separator: true });
+  return result;
 }
 
 function parseConfigModel(config: unknown): PromptModelMeta {
@@ -355,12 +402,44 @@ function statuslineColumnsBudget(input: {
   );
 }
 
+function statuslineSegmentColor(theme: TuiPluginApi["theme"]["current"], segment: StatuslineSegment) {
+  if (segment.separator || !segment.field) return theme.textMuted;
+  switch (segment.field) {
+    case "repo":
+      return theme.text;
+    case "branch":
+      return theme.info;
+    case "context_used":
+      return theme.accent;
+    case "context_remaining":
+      return theme.success;
+    case "context_length":
+      return theme.secondary;
+    case "context_window":
+      return theme.accent;
+    case "subagent_status":
+      return theme.primary;
+    case "agent_status":
+      return theme.primary;
+    case "quota_5h":
+      return theme.warning;
+    case "quota_weekly":
+      return theme.warning;
+    case "session_io":
+      return theme.secondary;
+    case "session_total":
+      return theme.secondary;
+    default:
+      return theme.textMuted;
+  }
+}
+
 function StatuslineView(props: {
   api: TuiPluginApi;
   sessionID: string;
   rightSlotColumns: number;
 }): JSX.Element {
-  const [text, setText] = createSignal("");
+  const [parts, setParts] = createSignal<StatuslineDisplayPart[]>([]);
   const [layoutVersion, setLayoutVersion] = createSignal(0);
   const dimensions = useTerminalDimensions();
   const maxWidth = createMemo(() => {
@@ -372,8 +451,8 @@ function StatuslineView(props: {
       rightSlotColumns: props.rightSlotColumns
     });
   });
-  const displayText = createMemo(() => truncateColumns(text(), maxWidth()));
-  const displayWidth = createMemo(() => displayColumns(displayText()));
+  const displaySegments = createMemo(() => truncateStatuslineSegments(parts(), maxWidth()));
+  const displayWidth = createMemo(() => segmentsColumns(displaySegments()));
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let disposed = false;
   let version = 0;
@@ -388,14 +467,14 @@ function StatuslineView(props: {
     if (disposed) return;
     lastRecentModelKey = recentModelKey();
     const currentVersion = ++version;
-    void buildTuiStatusline(props.api, props.sessionID)
+    void buildTuiStatuslineParts(props.api, props.sessionID)
       .then((next) => {
         if (disposed || currentVersion !== version) return;
-        setText(next);
+        setParts(next);
       })
       .catch(() => {
         if (disposed || currentVersion !== version) return;
-        setText("statusline error");
+        setParts([{ text: "statusline error" }]);
       });
   };
 
@@ -449,11 +528,20 @@ function StatuslineView(props: {
   });
 
   return (
-    <Show when={displayText()}>
-      <box width={displayWidth()} flexShrink={0}>
-        <text fg={props.api.theme.current.textMuted} wrapMode="none" width={displayWidth()} flexShrink={0}>
-          {displayText()}
-        </text>
+    <Show when={displaySegments().length}>
+      <box width={displayWidth()} flexShrink={0} flexDirection="row">
+        <For each={displaySegments()}>
+          {(segment) => (
+            <text
+              fg={statuslineSegmentColor(props.api.theme.current, segment)}
+              wrapMode="none"
+              width={displayColumns(segment.text)}
+              flexShrink={0}
+            >
+              {segment.text}
+            </text>
+          )}
+        </For>
       </box>
     </Show>
   );

@@ -43,6 +43,16 @@ Yes, build first. OpenCode resolves the TUI entry from `dist/tui.tsx`.
 
 The statusline updates after selection changes, session/message events, and periodically while the TUI is open.
 
+Available statusline fields:
+
+- Repository, branch
+- Context used, context remaining, context length, context used/total
+- Subagent status, main agent status
+- 5h quota, weekly quota
+- Session input/output tokens, session total tokens
+
+Fields are rendered in the order selected in `/statusline`; unavailable provider/model data is omitted. Field groups are color-coded in the TUI, with muted separators.
+
 ## OpenCode config
 
 Add the package/path as a TUI plugin so `/usage` and `/statusline` are handled before they enter chat context.

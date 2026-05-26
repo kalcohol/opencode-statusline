@@ -10,6 +10,7 @@ export const STATUSLINE_FIELDS = [
   { id: "branch", label: "Branch", aliases: ["git"] },
   { id: "context_used", label: "Context used", aliases: ["ctx", "ctx_used", "context"] },
   { id: "context_remaining", label: "Context remaining", aliases: ["ctx_left", "left"] },
+  { id: "context_length", label: "Context length", aliases: ["context_limit", "ctx_limit", "ctx_max", "model_context", "window"] },
   { id: "context_window", label: "Context used/total", aliases: ["ctx_total", "context_total"] },
   { id: "subagent_status", label: "Subagent status", aliases: ["subagent", "subagents", "sub"] },
   { id: "agent_status", label: "Main agent status", aliases: ["agent", "status"] },
@@ -100,4 +101,3 @@ export function parseStatuslineFieldArguments(args: string): {
   }
   return { clear: false, fields: uniqueFields(fields), unknown };
 }
-

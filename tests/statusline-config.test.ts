@@ -3,9 +3,10 @@ import { parseStatuslineFieldArguments } from "../src/lib/statusline-config.js";
 
 describe("parseStatuslineFieldArguments", () => {
   it("preserves selection order", () => {
-    expect(parseStatuslineFieldArguments("branch repo 5h tokens").fields).toEqual([
+    expect(parseStatuslineFieldArguments("branch repo ctx_max 5h tokens").fields).toEqual([
       "branch",
       "repo",
+      "context_length",
       "quota_5h",
       "session_total"
     ]);
@@ -15,4 +16,3 @@ describe("parseStatuslineFieldArguments", () => {
     expect(parseStatuslineFieldArguments("clear").clear).toBe(true);
   });
 });
-
