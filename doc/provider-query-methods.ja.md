@@ -1,0 +1,375 @@
+# Provider Quota Query Methods
+
+[中文](provider-query-methods.md) | [English](provider-query-methods.en.md) | [日本語](provider-query-methods.ja.md)
+
+この文書は `opencode-statusline` が実装している provider usage/quota query methods を説明します。実装入口は `src/lib/providers.ts` で、provider-specific response を `UsageReport` に normalize し、`/usage` dialog と quota statusline fields で再利用します。
+
+Statusline の `session_cost` field は、この provider quota collector を使いません。まず OpenCode assistant message に記録された `cost` を読み、存在しない場合だけ current model catalog pricing と token counts から equivalent cost を推定します。
+
+## Credential Resolution
+
+API-key providers は次の順序で credentials を解決します。
+
+1. provider-specific environment variables
+2. OpenCode config `provider.<id>.options.apiKey`
+3. runtime provider `key`
+4. OpenCode `auth.json` の API-key entries
+
+`provider.<id>.options.apiKey` は `{env:VAR_NAME}` template をサポートします。OAuth providers は `auth.json` の OAuth token だけを読みます。
+
+default `auth.json` locations：
+
+| Platform | Path |
+| --- | --- |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/opencode/auth.json` |
+| macOS | `~/Library/Application Support/opencode/auth.json` または `~/.local/share/opencode/auth.json` |
+| Windows | `%APPDATA%/opencode/auth.json` または `%LOCALAPPDATA%/opencode/auth.json` |
+
+`OPENCODE_AUTH_JSON` で上書きできます。
+
+## Provider Overview
+
+| Provider / plan | Provider IDs | Credential hints | 表示データ |
+| --- | --- | --- | --- |
+| Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota、time quota |
+| Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota、time quota |
+| Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage window、存在する場合は 5h window |
+| MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h quota、weekly quota |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance、availability |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、usage totals |
+| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h/weekly/monthly dashboard quota |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly quota、code review quota、credits |
+| OpenCode Zen | `opencode` | N/A | recognized, but no public quota API |
+
+Provider IDs は大文字小文字を区別せずに match します。
+
+## Z.ai / Zhipu Coding Plan
+
+Z.ai と Zhipu は同じ response shape を使います。plugin は現在 quota endpoint だけを呼びます。
+
+| Provider kind | Endpoint |
+| --- | --- |
+| Z.ai | `GET https://api.z.ai/api/monitor/usage/quota/limit` |
+| Zhipu / BigModel | `GET https://bigmodel.cn/api/monitor/usage/quota/limit` |
+
+Headers：
+
+```text
+Authorization: <token>
+Content-Type: application/json
+User-Agent: OpenCode-Statusline/0.1
+```
+
+token は `Bearer ` prefix なしでそのまま送ります。
+
+Typical response shape：
+
+```json
+{
+  "data": {
+    "limits": [
+      {
+        "type": "TOKENS_LIMIT",
+        "unit": 3,
+        "percentage": 45.2,
+        "nextResetTime": 1760000000000
+      },
+      {
+        "type": "TIME_LIMIT",
+        "percentage": 30.1,
+        "currentValue": 1800,
+        "usage": 6000
+      }
+    ]
+  }
+}
+```
+
+Mapping：
+
+| Response | Usage window |
+| --- | --- |
+| `type === "TOKENS_LIMIT"`, `unit === 6` | weekly quota |
+| `type === "TOKENS_LIMIT"`, `unit === 4` | daily quota |
+| `type === "TOKENS_LIMIT"`, `unit === 3` または first token window | 5h quota |
+| `type === "TIME_LIMIT"` | monthly time quota |
+
+plugin は `percentage` を used percent として使い、存在する場合は `nextResetTime` を reset time として使います。
+
+## Kimi Code
+
+Endpoint：
+
+```text
+GET https://api.kimi.com/coding/v1/usages
+```
+
+Headers：
+
+```text
+Authorization: Bearer <token>
+User-Agent: OpenCode-Statusline/0.1
+```
+
+Supported response variants：
+
+```json
+{
+  "data": {
+    "usage": {
+      "limit": 100,
+      "used": 45,
+      "remaining": 55,
+      "name": "Kimi Code",
+      "reset_at": "2026-06-01T00:00:00Z"
+    },
+    "limits": [
+      {
+        "name": "rolling",
+        "detail": {
+          "limit": 100,
+          "used": 45,
+          "remaining": 55,
+          "reset_at": "2026-06-01T00:00:00Z"
+        },
+        "window": {
+          "duration": 5,
+          "timeUnit": "HOUR"
+        }
+      }
+    ]
+  }
+}
+```
+
+parser は top-level `usage` と `data.usage` の両方を受け付けます。`used` から used count を取得し、`remaining` しかない場合は `limit - remaining` で計算します。`limits[]` row の `window.duration === 5` かつ `window.timeUnit` が `HOUR` を含む場合、5h quota window に map します。
+
+## MiniMax CN Coding Plan
+
+Endpoint：
+
+```text
+GET https://api.minimaxi.com/v1/token_plan/remains
+```
+
+Headers：
+
+```text
+Authorization: Bearer <token>
+User-Agent: OpenCode-Statusline/0.1
+```
+
+Response shape：
+
+```json
+{
+  "model_remains": [
+    {
+      "model_name": "MiniMax-M*",
+      "current_interval_total_count": 100,
+      "current_interval_usage_count": 30,
+      "remains_time": 18000,
+      "current_weekly_total_count": 500,
+      "current_weekly_usage_count": 150,
+      "weekly_remains_time": 432000
+    }
+  ],
+  "base_resp": {
+    "status_code": 0,
+    "status_msg": "success"
+  }
+}
+```
+
+実装は `MiniMax-M*` wildcard row を優先し、次に current model id と一致する row、最後に first row を選びます。CN endpoint は `*_usage_count` を used count として扱います。
+
+| Response fields | Usage window |
+| --- | --- |
+| `current_interval_usage_count` / `current_interval_total_count`, `remains_time` | 5h quota |
+| `current_weekly_usage_count` / `current_weekly_total_count`, `weekly_remains_time` | weekly quota |
+
+## DeepSeek
+
+Endpoint：
+
+```text
+GET https://api.deepseek.com/user/balance
+```
+
+Headers：
+
+```text
+Authorization: Bearer <token>
+User-Agent: OpenCode-Statusline/0.1
+```
+
+Response shape：
+
+```json
+{
+  "is_available": true,
+  "balance_infos": [
+    {
+      "currency": "CNY",
+      "total_balance": "10.50",
+      "granted_balance": "5.00",
+      "topped_up_balance": "5.50"
+    }
+  ]
+}
+```
+
+DeepSeek は rolling quota windows ではなく account balances を公開します。plugin は各 currency balance を format し、存在する場合は granted/topped-up split rows も含めます。
+
+## OpenRouter
+
+Endpoint：
+
+```text
+GET https://openrouter.ai/api/v1/key
+```
+
+Headers：
+
+```text
+Authorization: Bearer <token>
+User-Agent: OpenCode-Statusline/0.1
+```
+
+Response shape：
+
+```json
+{
+  "data": {
+    "label": "sk-or-v1-abc...123",
+    "limit": 1000,
+    "limit_remaining": 750.5,
+    "limit_reset": "daily",
+    "usage": 12345.67,
+    "usage_daily": 42.1,
+    "usage_weekly": 230.5,
+    "usage_monthly": 1200,
+    "byok_usage": 0,
+    "is_free_tier": false
+  }
+}
+```
+
+plugin は key label、limit/remaining limit、reset label、usage totals、BYOK usage、free-tier state を表示します。OpenRouter は coding plans と同じ意味の 5h/weekly subscription windows を公開していません。
+
+## OpenCode Go
+
+OpenCode Go は stable public JSON API を公開していません。plugin は workspace dashboard HTML を scrape します。
+
+Required environment variables：
+
+| Variable | Meaning |
+| --- | --- |
+| `OPENCODE_GO_WORKSPACE_ID` | dashboard URL の workspace id |
+| `OPENCODE_GO_AUTH_COOKIE` | browser の `auth` cookie value |
+
+Request：
+
+```text
+GET https://opencode.ai/workspace/<workspaceId>/go
+Cookie: auth=<authCookie>
+Accept: text/html
+User-Agent: Mozilla/5.0
+```
+
+scraper は Solid hydration fragments をどちらの field order でも探します。
+
+```text
+rollingUsage:$R[n]={usagePercent:<number>,resetInSec:<number>}
+weeklyUsage:$R[n]={usagePercent:<number>,resetInSec:<number>}
+monthlyUsage:$R[n]={usagePercent:<number>,resetInSec:<number>}
+```
+
+これらは 5h、weekly、monthly windows に map します。この collector は性質上 fragile です。dashboard HTML shape と auth cookie lifetime は plugin の管理外です。
+
+## OpenAI / ChatGPT / Codex OAuth
+
+Endpoint：
+
+```text
+GET https://chatgpt.com/backend-api/wham/usage
+```
+
+Credentials：
+
+| Source | Keys |
+| --- | --- |
+| OpenCode `auth.json` OAuth entry | `openai`, `codex`, `chatgpt`, `opencode` |
+
+Headers：
+
+```text
+Authorization: Bearer <oauth-access-token>
+ChatGPT-Account-Id: <accountId>
+User-Agent: OpenCode-Statusline/0.1
+```
+
+plugin は auth.json から `.access`、`.expires`、`.accountId` を読みます。`accountId` がない場合は JWT claim `https://api.openai.com/auth.chatgpt_account_id` の decode を試みます。
+
+Response shape：
+
+```json
+{
+  "plan_type": "chatgptplusplan",
+  "rate_limit": {
+    "limit_reached": false,
+    "primary_window": {
+      "used_percent": 45,
+      "reset_after_seconds": 7200,
+      "reset_at": 1700000000
+    },
+    "secondary_window": {
+      "used_percent": 20,
+      "reset_after_seconds": 302400,
+      "reset_at": 1700400000
+    }
+  },
+  "code_review_rate_limit": {
+    "primary_window": {
+      "used_percent": 10,
+      "reset_after_seconds": 43200
+    }
+  },
+  "credits": {
+    "has_credits": true,
+    "unlimited": false,
+    "balance": "50.00"
+  }
+}
+```
+
+Mapping：
+
+| Response | Usage window / item |
+| --- | --- |
+| `rate_limit.primary_window` | 5h quota |
+| `rate_limit.secondary_window` | weekly quota |
+| `code_review_rate_limit.primary_window` | code review quota |
+| `credits` | credits balance / unlimited state |
+
+expired OAuth access tokens は unavailable として報告されます。この plugin は OAuth token を refresh しません。
+
+## OpenCode Zen
+
+Provider id `opencode` は認識されますが、OpenCode Zen は現在 public balance/quota API を持ちません。collector は意図的に説明付き error を返し、`/usage` が quota fields が省略される理由を表示できるようにします。
+
+## Normalization Rules
+
+すべての collector は provider-specific data を次に normalize します。
+
+| Field | Meaning |
+| --- | --- |
+| `windows[]` | 5h、daily、weekly、monthly、code review などの quota windows |
+| `balances[]` | account balance-like rows |
+| `items[]` | key label、model row、free tier、plan details などの miscellaneous labels |
+| `usedPercent` / `remainingPercent` | `0..100` に clamp |
+| `resetAtMs` / `resetAfterMs` | UI formatting で reset time を表示するために使用 |
+
+absolute reset timestamps は `/usage` で local time の固定幅 `YYYY-MM-DD HH:mm:ss` fields として表示します。relative reset durations は compact duration text のままです。
+
+Quota collection は provider/model kind ごとに 60 秒 cache されます。`/usage` は fresh read を強制し、statusline quota fields は cache を使い、statusline 側で 1 秒 timeout も適用します。

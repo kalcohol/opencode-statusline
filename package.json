@@ -26,7 +26,7 @@
   "files": [
     "dist",
     "doc",
-    "README.md"
+    "README*.md"
   ],
   "scripts": {
     "build": "tsc && node scripts/prepare-tui-dist.mjs",

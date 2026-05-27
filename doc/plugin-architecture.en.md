@@ -1,15 +1,15 @@
-# 插件架构设计
+# Plugin Architecture
 
 [中文](plugin-architecture.md) | [English](plugin-architecture.en.md) | [日本語](plugin-architecture.ja.md)
 
-`opencode-statusline` 是一个 OpenCode TUI 插件，提供两个用户入口：
+`opencode-statusline` is an OpenCode TUI plugin with two user-facing entries:
 
-- `/usage`：在 TUI dialog 中显示当前模型所属 provider 的 usage/quota 信息。
-- `/statusline`：配置 prompt 模型行右侧追加显示的状态字段。
+- `/usage`: shows usage/quota details for the active model's provider in a TUI dialog.
+- `/statusline`: configures extra fields appended to the prompt model row.
 
-设计目标是：不污染聊天上下文、尽量复用 OpenCode TUI 状态、provider 查询可缓存且可失败、statusline 不挤坏 OpenCode 原生 prompt 布局。
+The design goals are: no chat-context pollution, reuse OpenCode TUI state where possible, keep provider queries cached and failure-tolerant, and avoid breaking OpenCode's native prompt layout.
 
-## 包结构
+## Package Layout
 
 ```text
 src/
@@ -29,7 +29,7 @@ tests/
   *.test.ts                unit tests for formatting, config, model resolution, statusline output
 ```
 
-`package.json` exposes both server and TUI entries because OpenCode plugin loading expects the package shape. The server plugin is intentionally empty; interactive features live in the TUI plugin.
+`package.json` exposes both server and TUI entries because OpenCode plugin loading expects that package shape. The server plugin is intentionally empty; the interactive features live in the TUI plugin.
 
 ## TUI Entry
 
@@ -64,7 +64,7 @@ Reset timestamps are formatted in local time as fixed-width `YYYY-MM-DD HH:mm:ss
 3. Selecting an item toggles it in the current field array.
 4. Selection order is preserved and determines display order.
 5. Config is saved with `saveStatuslineConfig()`.
-6. `notifyConfigChanged()` triggers statusline refresh.
+6. `notifyConfigChanged()` triggers a statusline refresh.
 
 Persisted config shape:
 
@@ -200,7 +200,7 @@ Provider collectors live in `src/lib/providers.ts`. Each collector:
 3. converts provider-specific data into `UsageReport`
 4. returns an error report instead of throwing to UI callers
 
-Detailed provider endpoints and response mappings are documented in [provider-query-methods.md](./provider-query-methods.md).
+Detailed provider endpoints and response mappings are documented in [provider-query-methods.en.md](./provider-query-methods.en.md).
 
 ## Known Limits
 

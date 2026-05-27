@@ -1,27 +1,29 @@
 # opencode-statusline
 
-OpenCode TUI plugin for provider usage dialogs and configurable prompt statusline fields.
+[中文](README.md) | [English](README.en.md) | [日本語](README.ja.md)
 
-It adds:
+OpenCode TUI 插件，用于在 TUI 内查看 provider usage/quota，并按需扩展 prompt statusline。
 
-- `/usage` to inspect the active provider's quota, usage, and balance data in a TUI dialog.
-- `/statusline` to choose extra fields shown after OpenCode's prompt model/provider label.
-- Colored statusline segments, ordered exactly as selected.
-- No chat-context pollution: usage and statusline data are rendered only in the TUI.
+它提供：
 
-## Screenshots
+- `/usage`：在 TUI dialog 中查看当前活跃模型所属 provider 的 quota、usage、balance 等信息。
+- `/statusline`：选择要追加到 OpenCode prompt 模型/provider 后面的状态字段。
+- 彩色 statusline 字段，并严格按选择顺序显示。
+- 不污染聊天上下文：usage 和 statusline 信息只渲染在 TUI 中，不写入对话历史。
 
-Example statusline fields appended to the OpenCode prompt:
+## 截图
+
+OpenCode prompt 中追加的示例 statusline 字段：
 
 ![OpenCode prompt statusline with selected repository, branch, context, quota, token, TTFT, and generation speed fields](doc/images/statusline-overview.jpg)
 
-`/usage` provider quota dialog:
+`/usage` provider quota dialog：
 
 ![OpenCode usage dialog showing provider, model, auth source, plan, and quota windows](doc/images/usage-dialog.jpg)
 
-## Install
+## 安装
 
-Clone and build the plugin:
+克隆并构建插件：
 
 ```sh
 git clone https://github.com/kalcohol/opencode-statusline.git
@@ -30,26 +32,26 @@ npm install
 npm run build
 ```
 
-Get the absolute path to the cloned package:
+查看插件目录的绝对路径：
 
 ```sh
 pwd
 ```
 
-Add that package path to OpenCode's TUI config. The usual global config file is:
+把这个绝对路径加入 OpenCode 的 TUI 配置。常见的全局配置文件是：
 
 ```text
 ${XDG_CONFIG_HOME:-~/.config}/opencode/tui.jsonc
 ```
 
-Create the directory/file if needed:
+如果目录或文件还不存在，可以先创建并打开：
 
 ```sh
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 ${EDITOR:-vi} "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/tui.jsonc"
 ```
 
-Use the absolute path printed by `pwd`:
+使用 `pwd` 输出的绝对路径：
 
 ```jsonc
 {
@@ -58,7 +60,7 @@ Use the absolute path printed by `pwd`:
 }
 ```
 
-If the file already has plugins, append this package path to the existing `plugin` array:
+如果已经有其他插件，把本插件路径追加到已有的 `plugin` 数组：
 
 ```jsonc
 {
@@ -70,9 +72,9 @@ If the file already has plugins, append this package path to the existing `plugi
 }
 ```
 
-Restart the OpenCode TUI after changing plugin config or rebuilding the package. Then run `/usage` or `/statusline` inside OpenCode to verify the plugin is loaded.
+修改插件配置或重新构建后，重启 OpenCode TUI。进入 OpenCode 后运行 `/usage` 或 `/statusline`，能打开对应界面就说明插件已加载。
 
-To update an existing clone:
+更新已有 clone：
 
 ```sh
 cd /absolute/path/to/opencode-statusline
@@ -81,9 +83,9 @@ npm install
 npm run build
 ```
 
-Then restart the OpenCode TUI.
+然后重启 OpenCode TUI。
 
-`opencode.json` is not required for the current plugin, but keeping the same package path there is harmless:
+当前插件不要求配置 `opencode.json`，但在其中保留同一个插件路径也没有问题：
 
 ```jsonc
 {
@@ -92,116 +94,116 @@ Then restart the OpenCode TUI.
 }
 ```
 
-Common global config locations:
+常见全局配置位置：
 
 ```text
 ${XDG_CONFIG_HOME:-~/.config}/opencode/tui.jsonc
 ${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.jsonc
 ```
 
-Project-local config is also supported:
+也支持项目内配置：
 
 ```text
 <project>/.opencode/tui.jsonc
 <project>/.opencode/opencode.jsonc
 ```
 
-OpenCode also walks upward from the current project directory for `tui.json(c)` and `opencode.json(c)`. If `OPENCODE_CONFIG_DIR` is set, use that directory instead of the global default.
+OpenCode 会从当前项目目录向上查找 `tui.json(c)` 和 `opencode.json(c)`。如果设置了 `OPENCODE_CONFIG_DIR`，则使用该目录代替全局默认目录。
 
-## Commands
+## 命令
 
 ### `/usage`
 
-Shows usage/quota details for the active model's provider. The dialog does not send a model request and does not write usage data into the conversation.
+显示当前活跃模型所属 provider 的 usage/quota 信息。这个 dialog 不会发起模型请求，也不会把 usage 信息写入对话。
 
-The command resolves the active provider/model from the current session, recent TUI model state, or `config.model`. It fetches provider data fresh when opened.
+命令会从当前 session、近期 TUI 模型状态或 `config.model` 解析活跃 provider/model。每次打开 `/usage` 都会重新请求 provider 数据。
 
-Reset timestamps are shown in local time using fixed-width `YYYY-MM-DD HH:mm:ss` fields.
+重置时间按本地时间显示，并使用固定宽度的 `YYYY-MM-DD HH:mm:ss` 格式。
 
 ### `/statusline`
 
-Opens a field picker. Selecting a field toggles it. The order you select fields is the order used in the prompt statusline.
+打开字段选择器。选择字段会切换启用状态；字段选择顺序就是 prompt statusline 中的显示顺序。
 
-Available fields:
+可用字段：
 
-| Field | Description |
+| 字段 | 说明 |
 | --- | --- |
-| Repository | worktree or directory basename |
-| Branch | current git branch name |
-| Context used | latest assistant context token estimate |
-| Context remaining | model context limit minus current context estimate |
-| Context length | current model context limit |
-| Context used/total | compact used/limit display |
-| TTFT/speed | approximate time to first output and output token generation speed; keeps the last complete value while a new response is still incomplete |
-| Subagent status | active subagent or child-session status; idle/completed children are omitted |
-| Main agent status | current main session status, without an `agent` prefix |
-| 5h quota | provider 5h quota used percent, when available |
-| Weekly quota | provider weekly quota used percent, when available |
-| Session input/output tokens | accumulated session and child-session input/output tokens as `<input> in / <output> out` |
-| Session total tokens | accumulated session and child-session total tokens as `<total> used`; includes reasoning/cache tokens when OpenCode exposes them |
-| Session cost | accumulated session and child-session cost as `cost $0.02`; shows `eq $0.02` when estimated from model pricing |
+| Repository | worktree 或目录 basename |
+| Branch | 当前 git 分支名 |
+| Context used | 最新 assistant 消息的上下文 token 估算 |
+| Context remaining | 模型上下文上限减去当前上下文估算 |
+| Context length | 当前模型上下文上限 |
+| Context used/total | 紧凑的已用/总上下文显示 |
+| TTFT/speed | 近似首 token 延迟和输出 token 生成速度；新回复未完成时保留上一条完整指标 |
+| Subagent status | 活跃 subagent 或 child-session 状态；idle/completed 的 child 会被省略 |
+| Main agent status | 当前主 session 状态，不带 `agent` 前缀 |
+| 5h quota | provider 5h quota 使用百分比，有数据时显示 |
+| Weekly quota | provider weekly quota 使用百分比，有数据时显示 |
+| Session input/output tokens | 当前 session 和 child-session 累计输入/输出 token，格式为 `<input> in / <output> out` |
+| Session total tokens | 当前 session 和 child-session 累计总 token，格式为 `<total> used`；OpenCode 暴露 reasoning/cache token 时会计入 |
+| Session cost | 当前 session 和 child-session 累计成本，格式为 `cost $0.02`；按模型价格估算时显示为 `eq $0.02` |
 
-Unavailable provider/model data is omitted. For example, OpenRouter has balance and usage totals, but no 5h subscription quota window.
+没有的数据会自动省略。例如 OpenRouter 有 balance 和 usage totals，但没有 coding plan 意义上的 5h subscription quota window，因此不会显示 `5h quota`。
 
-For subscription or coding-plan providers, `Session cost` may be an equivalent per-token estimate rather than an actual amount charged. It prefers OpenCode's recorded message cost when present, then falls back to model catalog pricing.
+对于订阅制或 coding plan provider，`Session cost` 可能只是按 token 单价折算的等价估算，不一定代表真实扣费。它优先使用 OpenCode 记录在 message 上的 cost；没有记录时才回退到模型 catalog pricing。
 
-The statusline preserves OpenCode's existing right-side prompt content. It measures that content and dynamically truncates this plugin's fields to avoid wrapping onto the next line.
+Statusline 会保留 OpenCode 原有的 prompt 右侧内容。插件会测量已有右侧内容并动态截断本插件字段，避免换行挤坏 prompt 布局。
 
-## Supported Providers
+## 支持的 Providers
 
-`/usage` and quota statusline fields currently support these provider IDs. Matching is case-insensitive.
+`/usage` 和 quota statusline 字段当前支持以下 provider ID。匹配不区分大小写。
 
-| Provider / plan | Provider IDs | Credential hints | Data shown when available |
+| Provider / plan | Provider IDs | 凭据提示 | 有数据时显示 |
 | --- | --- | --- | --- |
-| Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota, time quota |
-| Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota, time quota |
-| Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage windows, including 5h when present |
-| MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h and weekly token quota |
-| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance and availability |
-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label, remaining limit, total limit, usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h, weekly, and monthly dashboard quota |
-| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OAuth entry in OpenCode `auth.json` | ChatGPT plan, 5h/weekly quota, code review quota, credits |
+| Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota，time quota |
+| Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota，time quota |
+| Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage windows，包括存在时的 5h window |
+| MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h 和 weekly token quota |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance 和 availability |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、total limit、usage totals |
+| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h、weekly、monthly dashboard quota |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly quota、code review quota、credits |
 
-API-key providers resolve credentials in this order:
+API key 类 provider 按以下顺序解析凭据：
 
-1. environment variables
+1. 环境变量
 2. OpenCode `provider.<id>.options.apiKey`
 3. runtime provider key
 4. OpenCode `auth.json`
 
-OpenAI/ChatGPT/Codex usage uses OAuth from `auth.json`. `opencode` / OpenCode Zen is recognized, but OpenCode Zen does not currently expose a public balance/quota API, so quota fields are omitted.
+OpenAI/ChatGPT/Codex usage 使用 `auth.json` 中的 OAuth。`opencode` / OpenCode Zen 会被识别，但 OpenCode Zen 目前没有公开的 balance/quota API，因此 quota 字段会省略。
 
-Detailed endpoint notes are in [doc/provider-query-methods.md](doc/provider-query-methods.md).
+详细 endpoint 说明见 [doc/provider-query-methods.md](doc/provider-query-methods.md)。
 
-## State Files
+## 状态文件
 
-The statusline field selection is stored at:
+Statusline 字段选择保存到：
 
 ```text
 ${XDG_DATA_HOME:-~/.local/share}/opencode/statusline-plugin.json
 ```
 
-Override with:
+可用环境变量覆盖：
 
 ```text
 OPENCODE_STATUSLINE_CONFIG=/path/to/statusline-plugin.json
 ```
 
-After a TUI model switch, the plugin reads OpenCode's recent model state from:
+TUI 内切换模型后，插件会从 OpenCode 最近模型状态读取：
 
 ```text
 ${XDG_STATE_HOME:-~/.local/state}/opencode/model.json
 ```
 
-Override the state directory with:
+可用环境变量覆盖 state 目录：
 
 ```text
 OPENCODE_STATUSLINE_STATE_DIR=/path/to/opencode-state
 ```
 
-## Development
+## 开发
 
-Useful commands:
+常用命令：
 
 ```sh
 npm run typecheck
@@ -209,16 +211,16 @@ npm test
 npm run build
 ```
 
-If the local `/tmp` mount rejects Node/Vitest writes, point `TMPDIR` at an ignored project-local directory:
+如果本地 `/tmp` 挂载点拒绝 Node/Vitest 写入，可以把 `TMPDIR` 指向项目内被忽略的临时目录：
 
 ```sh
 mkdir -p .tmp
 TMPDIR=$PWD/.tmp npm test
 ```
 
-OpenCode resolves the TUI entry from `dist/tui.tsx`, so run `npm run build` after source changes before testing in the TUI.
+OpenCode 从 `dist/tui.tsx` 解析 TUI entry，因此改源码后要先运行 `npm run build` 再在 TUI 中测试。
 
-Source layout:
+源码结构：
 
 ```text
 src/
@@ -236,4 +238,4 @@ src/
     format.ts              shared formatting helpers
 ```
 
-Architecture details are in [doc/plugin-architecture.md](doc/plugin-architecture.md).
+架构细节见 [doc/plugin-architecture.md](doc/plugin-architecture.md)。

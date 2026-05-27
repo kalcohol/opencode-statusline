@@ -1,44 +1,44 @@
-# Provider 配额查询方法
+# Provider Quota Query Methods
 
 [中文](provider-query-methods.md) | [English](provider-query-methods.en.md) | [日本語](provider-query-methods.ja.md)
 
-本文记录 `opencode-statusline` 当前实现的 provider usage/quota 查询方法。实现入口在 `src/lib/providers.ts`，统一输出 `UsageReport`，供 `/usage` 对话框和 statusline quota 字段复用。
+This document describes the provider usage/quota query methods implemented by `opencode-statusline`. The implementation entry is `src/lib/providers.ts`, which normalizes provider-specific responses into `UsageReport` for the `/usage` dialog and quota statusline fields.
 
-Statusline 的 `session_cost` 字段不走这里的 provider quota collector。它优先读取 OpenCode assistant message 上记录的 `cost`，没有记录时才用当前模型 catalog pricing 和 token 数估算等价成本。
+The `session_cost` statusline field does not use this provider quota collector. It first reads `cost` recorded on OpenCode assistant messages; when that is absent, it estimates equivalent cost from current model catalog pricing and token counts.
 
-## 认证解析
+## Credential Resolution
 
-API key 类 provider 按以下顺序解析凭据：
+API-key providers resolve credentials in this order:
 
-1. Provider 专用环境变量
-2. OpenCode 配置中的 `provider.<id>.options.apiKey`
-3. TUI runtime provider 对象上的 `provider.key`
-4. OpenCode `auth.json` 中的 API key 条目
+1. provider-specific environment variables
+2. OpenCode config `provider.<id>.options.apiKey`
+3. runtime provider `key`
+4. API-key entries in OpenCode `auth.json`
 
-`provider.<id>.options.apiKey` 支持 `{env:VAR_NAME}` 模板。OAuth 类 provider 只从 `auth.json` 读取 OAuth token。
+`provider.<id>.options.apiKey` supports `{env:VAR_NAME}` templates. OAuth providers only read OAuth tokens from `auth.json`.
 
-默认 `auth.json` 查找位置：
+Default `auth.json` locations:
 
-| 平台 | 路径 |
+| Platform | Path |
 | --- | --- |
 | Linux | `${XDG_DATA_HOME:-~/.local/share}/opencode/auth.json` |
-| macOS | `~/Library/Application Support/opencode/auth.json` 或 `~/.local/share/opencode/auth.json` |
-| Windows | `%APPDATA%/opencode/auth.json` 或 `%LOCALAPPDATA%/opencode/auth.json` |
+| macOS | `~/Library/Application Support/opencode/auth.json` or `~/.local/share/opencode/auth.json` |
+| Windows | `%APPDATA%/opencode/auth.json` or `%LOCALAPPDATA%/opencode/auth.json` |
 
-可用 `OPENCODE_AUTH_JSON` 覆盖 auth 文件路径。
+Override with `OPENCODE_AUTH_JSON`.
 
-## Provider 总览
+## Provider Overview
 
-| Provider / plan | Provider IDs | 凭据提示 | 当前展示数据 |
+| Provider / plan | Provider IDs | Credential hints | Data shown |
 | --- | --- | --- | --- |
-| Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota，time quota |
-| Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota，time quota |
-| Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage window，5h window when present |
-| MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h quota，weekly quota |
-| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance，availability |
-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label，remaining limit，usage totals |
+| Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota, time quota |
+| Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota, time quota |
+| Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage window, 5h window when present |
+| MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h quota, weekly quota |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance, availability |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label, remaining limit, usage totals |
 | OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h/weekly/monthly dashboard quota |
-| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan，5h/weekly quota，code review quota，credits |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan, 5h/weekly quota, code review quota, credits |
 | OpenCode Zen | `opencode` | N/A | recognized, but no public quota API |
 
 Provider IDs are matched case-insensitively.
@@ -181,7 +181,7 @@ Response shape:
 }
 ```
 
-The implementation selects the `MiniMax-M*` wildcard row first, then a row matching the current model id, then the first row. The CN endpoint treats `*_usage_count` as used count. It emits:
+The implementation selects the `MiniMax-M*` wildcard row first, then a row matching the current model id, then the first row. The CN endpoint treats `*_usage_count` as used count.
 
 | Response fields | Usage window |
 | --- | --- |
@@ -255,7 +255,7 @@ Response shape:
 }
 ```
 
-OpenRouter does not expose 5h/weekly subscription windows in the same sense as coding plans. The plugin shows key label, limit/remaining limit, reset label, usage totals, BYOK usage, and free-tier state when present.
+The plugin shows key label, limit/remaining limit, reset label, usage totals, BYOK usage, and free-tier state when present. OpenRouter does not expose 5h/weekly subscription windows in the same sense as coding plans.
 
 ## OpenCode Go
 
