@@ -9,6 +9,16 @@ It adds:
 - Colored statusline segments, ordered exactly as selected.
 - No chat-context pollution: usage and statusline data are rendered only in the TUI.
 
+## Screenshots
+
+Statusline fields appended to the OpenCode prompt:
+
+![OpenCode prompt statusline with repository, branch, context, quota, token, TTFT, and generation speed fields](doc/images/statusline-overview.jpg)
+
+`/usage` provider quota dialog:
+
+![OpenCode usage dialog showing provider, model, auth source, plan, and quota windows](doc/images/usage-dialog.jpg)
+
 ## Install
 
 Build the package first:
