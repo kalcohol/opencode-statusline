@@ -15,7 +15,7 @@ It adds:
 
 Example statusline fields appended to the OpenCode prompt:
 
-![OpenCode prompt statusline with selected repository, branch, context, quota, token, TTFT, and generation speed fields](doc/images/statusline-overview.jpg)
+![OpenCode prompt statusline with repository, branch, git diff, context, cost, token, TTFT, and generation speed fields](doc/images/statusline-overview.jpg)
 
 `/usage` provider quota dialog:
 

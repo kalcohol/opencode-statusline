@@ -15,7 +15,7 @@ OpenCode TUI 向けのプラグインです。provider の usage/quota を TUI d
 
 OpenCode prompt に追加された statusline フィールドの例：
 
-![OpenCode prompt statusline with selected repository, branch, context, quota, token, TTFT, and generation speed fields](doc/images/statusline-overview.jpg)
+![OpenCode prompt statusline の例。repository、branch、git diff、context、cost、token、TTFT、generation speed fields を表示](doc/images/statusline-overview.jpg)
 
 `/usage` provider quota dialog：
 
