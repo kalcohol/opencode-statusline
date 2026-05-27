@@ -2,6 +2,8 @@
 
 本文记录 `opencode-statusline` 当前实现的 provider usage/quota 查询方法。实现入口在 `src/lib/providers.ts`，统一输出 `UsageReport`，供 `/usage` 对话框和 statusline quota 字段复用。
 
+Statusline 的 `session_cost` 字段不走这里的 provider quota collector。它优先读取 OpenCode assistant message 上记录的 `cost`，没有记录时才用当前模型 catalog pricing 和 token 数估算等价成本。
+
 ## 认证解析
 
 API key 类 provider 按以下顺序解析凭据：

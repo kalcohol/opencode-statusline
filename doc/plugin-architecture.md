@@ -102,11 +102,13 @@ Supported fields:
 | `quota_weekly` | provider weekly quota used percent |
 | `session_io` | session input/output tokens as `<input> in / <output> out` |
 | `session_total` | session total tokens as `<total> used` |
-| `session_cost` | session cost as `cost $0.02` or estimated equivalent cost as `eq $0.02` |
+| `session_cost` | session cost as `cost $0.02` or equivalent estimate as `eq $0.02` |
 
 Unavailable values are omitted. For example, OpenRouter has balance/usage data but no 5h subscription quota window, so `quota_5h` does not render for OpenRouter. Child sessions that are idle or completed are treated as no active subagent, so `subagent_status` is omitted in that state.
 
-`session_io`, `session_total`, and `session_cost` include child-session messages when OpenCode exposes those child sessions. `session_total` uses OpenCode's explicit total token value when present; otherwise it sums input, output, reasoning, and cache tokens. `session_cost` prefers OpenCode's recorded assistant message cost. If recorded cost is absent, it estimates an equivalent cost from model catalog pricing and input/output/cache token counts.
+`session_io`, `session_total`, and `session_cost` include child-session messages when OpenCode exposes those child sessions. `session_total` uses OpenCode's explicit total token value when present; otherwise it sums input, output, reasoning, and cache tokens.
+
+`session_cost` prefers OpenCode's recorded assistant message cost. If recorded cost is absent, it estimates an equivalent cost from model catalog pricing and input/output/cache token counts. This is useful for subscription or coding-plan providers, but `eq $...` should be read as a per-token equivalent estimate, not necessarily actual billing.
 
 `generation_metrics` is approximate because OpenCode exposes message and part timestamps rather than a provider-native TTFT field. The plugin computes TTFT from assistant message creation to the first text/reasoning/tool part start, and computes generation speed from output tokens over text/reasoning part duration. While a newer response is still incomplete, it keeps showing the latest complete metric instead of hiding the field.
 

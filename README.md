@@ -11,9 +11,9 @@ It adds:
 
 ## Screenshots
 
-Statusline fields appended to the OpenCode prompt:
+Example statusline fields appended to the OpenCode prompt:
 
-![OpenCode prompt statusline with repository, branch, context, quota, token, TTFT, and generation speed fields](doc/images/statusline-overview.jpg)
+![OpenCode prompt statusline with selected repository, branch, context, quota, token, TTFT, and generation speed fields](doc/images/statusline-overview.jpg)
 
 `/usage` provider quota dialog:
 
@@ -139,9 +139,11 @@ Available fields:
 | Weekly quota | provider weekly quota used percent, when available |
 | Session input/output tokens | accumulated session and child-session input/output tokens as `<input> in / <output> out` |
 | Session total tokens | accumulated session and child-session total tokens as `<total> used`; includes reasoning/cache tokens when OpenCode exposes them |
-| Session cost | accumulated session and child-session cost as `cost $0.02`; uses `eq $0.02` when estimated from model pricing |
+| Session cost | accumulated session and child-session cost as `cost $0.02`; shows `eq $0.02` when estimated from model pricing |
 
 Unavailable provider/model data is omitted. For example, OpenRouter has balance and usage totals, but no 5h subscription quota window.
+
+For subscription or coding-plan providers, `Session cost` may be an equivalent per-token estimate rather than an actual amount charged. It prefers OpenCode's recorded message cost when present, then falls back to model catalog pricing.
 
 The statusline preserves OpenCode's existing right-side prompt content. It measures that content and dynamically truncates this plugin's fields to avoid wrapping onto the next line.
 
