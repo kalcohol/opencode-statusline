@@ -9,9 +9,10 @@ function formatWindow(window: UsageWindow): string {
   const parts: string[] = [];
   if (window.usedPercent !== undefined) parts.push(`${formatPercent(window.usedPercent)} used`);
   if (window.remainingPercent !== undefined) parts.push(`${formatPercent(window.remainingPercent)} left`);
-  if (window.used !== undefined && window.total !== undefined) parts.push(`${window.used}/${window.total}`);
-  else if (window.used !== undefined) parts.push(`used ${window.used}`);
-  else if (window.total !== undefined) parts.push(`limit ${window.total}`);
+  const unit = window.unit ? ` ${window.unit}` : "";
+  if (window.used !== undefined && window.total !== undefined) parts.push(`${window.used}/${window.total}${unit}`);
+  else if (window.used !== undefined) parts.push(`used ${window.used}${unit}`);
+  else if (window.total !== undefined) parts.push(`limit ${window.total}${unit}`);
   const reset = formatReset(window);
   if (reset) parts.push(`reset ${reset}`);
   return `${window.label}: ${parts.join(", ") || "available"}`;

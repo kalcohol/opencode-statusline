@@ -165,6 +165,7 @@ The statusline preserves OpenCode's existing right-side prompt content. It measu
 | Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota, time quota |
 | Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage windows, including 5h when present |
 | MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h and weekly token quota |
+| Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | model calls use `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY`; usage requires `XIAOMI_MIMO_SESSION_COOKIE` | plan/compensation/monthly credits quota, credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance and availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label, remaining limit, total limit, usage totals |
 | OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h, weekly, and monthly dashboard quota |
@@ -178,6 +179,10 @@ API-key providers resolve credentials in this order:
 4. OpenCode `auth.json`
 
 OpenAI/ChatGPT/Codex usage uses OAuth from `auth.json`. `opencode` / OpenCode Zen is recognized, but OpenCode Zen does not currently expose a public balance/quota API, so quota fields are omitted.
+
+For Xiaomi MiMo Token Plan, the `tp-*` key is for OpenCode model calls. Xiaomi's current usage endpoint is behind SSO and rejects the `tp-*` key. To show Xiaomi data in `/usage` and statusline quota/balance fields, set `XIAOMI_MIMO_SESSION_COOKIE` from a logged-in browser session and do not commit the cookie.
+
+With only a `tp-*` key and no cookie, Xiaomi models can still be identified. Statusline fields that do not use the provider usage API, such as context, session tokens, session cost, TTFT, and git diff, still work; Xiaomi quota fields are omitted or `/usage` reports the missing cookie.
 
 Detailed endpoint notes are in [doc/provider-query-methods.en.md](doc/provider-query-methods.en.md).
 

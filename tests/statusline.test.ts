@@ -4,9 +4,11 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildTuiStatusline, providerBalanceText } from "../src/lib/statusline.js";
+import { buildTuiUsageText } from "../src/lib/tui-usage.js";
 
 const previousConfigPath = process.env.OPENCODE_STATUSLINE_CONFIG;
 const previousStateDir = process.env.OPENCODE_STATUSLINE_STATE_DIR;
+const previousXiaomiCookie = process.env.XIAOMI_MIMO_SESSION_COOKIE;
 let tempDir = "";
 
 function apiWithContextLimit(context: number | undefined) {
@@ -104,6 +106,8 @@ describe("buildTuiStatusline", () => {
     else process.env.OPENCODE_STATUSLINE_CONFIG = previousConfigPath;
     if (previousStateDir === undefined) delete process.env.OPENCODE_STATUSLINE_STATE_DIR;
     else process.env.OPENCODE_STATUSLINE_STATE_DIR = previousStateDir;
+    if (previousXiaomiCookie === undefined) delete process.env.XIAOMI_MIMO_SESSION_COOKIE;
+    else process.env.XIAOMI_MIMO_SESSION_COOKIE = previousXiaomiCookie;
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -174,6 +178,78 @@ describe("buildTuiStatusline", () => {
     };
 
     await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("bal $42.50");
+  });
+
+  it("renders Xiaomi MiMo Token Plan remaining credits in the statusline", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["provider_balance"] }));
+    process.env.XIAOMI_MIMO_SESSION_COOKIE = "serviceToken=test";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        code: 0,
+        data: {
+          usage: {
+            items: [
+              { name: "plan_total_token", used: 1_000_000, limit: 60_000_000, percent: 1.6667 }
+            ]
+          }
+        }
+      }),
+      text: async () => ""
+    } as Response);
+    const api = {
+      state: {
+        config: { model: "xiaomi-mimo/mimo-v2.5" },
+        provider: [{ id: "xiaomi-mimo", name: "Xiaomi MiMo Token Plan", models: { "mimo-v2.5": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "xiaomi-mimo", id: "mimo-v2.5" } }),
+          messages: () => [],
+          status: () => ({ type: "idle" })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("bal 59M credits");
+  });
+
+  it("formats Xiaomi MiMo Token Plan usage rows", async () => {
+    process.env.XIAOMI_MIMO_SESSION_COOKIE = "serviceToken=test";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        code: 0,
+        data: {
+          usage: {
+            items: [
+              { name: "plan_total_token", used: 12_000_000, limit: 60_000_000, percent: 20 },
+              { name: "compensation_total_token", used: 500_000, limit: 1_000_000, percent: 50 }
+            ]
+          },
+          monthUsage: {
+            items: [
+              { name: "month_total_token", used: 12_500_000, limit: 61_000_000, percent: 20.49 }
+            ]
+          }
+        }
+      }),
+      text: async () => ""
+    } as Response);
+    const api = {
+      state: {
+        config: { model: "xiaomi-mimo/mimo-v2.5-pro" },
+        provider: [{ id: "xiaomi-mimo", name: "Xiaomi MiMo Token Plan", models: { "mimo-v2.5-pro": {} } }],
+        session: {
+          get: () => ({ model: { providerID: "xiaomi-mimo", id: "mimo-v2.5-pro" } }),
+          messages: () => []
+        }
+      }
+    };
+
+    const usageText = await buildTuiUsageText(api as any, "ses_1");
+    expect(usageText).toContain("Plan quota: 20% used, 80% left, 12000000/60000000 credits");
+    expect(usageText).toContain("Credits remaining: 48M credits");
   });
 
   it("prefers remaining balance rows for compact provider balance text", () => {

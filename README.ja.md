@@ -165,6 +165,7 @@ Statusline は OpenCode の既存 prompt 右側コンテンツを保持します
 | Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota、time quota |
 | Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage windows、存在する場合は 5h window |
 | MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h と weekly token quota |
+| Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | model calls は `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY`、usage は `XIAOMI_MIMO_SESSION_COOKIE` が必要 | plan/compensation/monthly credits quota、credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance と availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、total limit、usage totals |
 | OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h、weekly、monthly dashboard quota |
@@ -178,6 +179,10 @@ API key provider は次の順序で認証情報を解決します：
 4. OpenCode `auth.json`
 
 OpenAI/ChatGPT/Codex usage は `auth.json` の OAuth を使います。`opencode` / OpenCode Zen は認識されますが、OpenCode Zen は現在 public balance/quota API を公開していないため quota フィールドは省略されます。
+
+Xiaomi MiMo Token Plan の `tp-*` key は OpenCode の model calls 用です。現在の Xiaomi usage endpoint は SSO 配下にあり、`tp-*` key は拒否されます。`/usage` と statusline quota/balance fields で Xiaomi data を表示するには、ログイン済み browser session から `XIAOMI_MIMO_SESSION_COOKIE` を設定してください。cookie を repository に commit しないでください。
+
+`tp-*` key だけで cookie がない場合でも、Xiaomi model の識別はできます。context、session tokens、session cost、TTFT、git diff など provider usage API を使わない statusline fields はそのまま動作します。Xiaomi quota fields は省略されるか、`/usage` で cookie missing を表示します。
 
 詳細な endpoint は [doc/provider-query-methods.ja.md](doc/provider-query-methods.ja.md) を参照してください。
 

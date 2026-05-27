@@ -165,6 +165,7 @@ Statusline 会保留 OpenCode 原有的 prompt 右侧内容。插件会测量已
 | Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota，time quota |
 | Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage windows，包括存在时的 5h window |
 | MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h 和 weekly token quota |
+| Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | 模型调用用 `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY`；usage 需要 `XIAOMI_MIMO_SESSION_COOKIE` | plan/compensation/monthly credits quota，credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance 和 availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、total limit、usage totals |
 | OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h、weekly、monthly dashboard quota |
@@ -178,6 +179,10 @@ API key 类 provider 按以下顺序解析凭据：
 4. OpenCode `auth.json`
 
 OpenAI/ChatGPT/Codex usage 使用 `auth.json` 中的 OAuth。`opencode` / OpenCode Zen 会被识别，但 OpenCode Zen 目前没有公开的 balance/quota API，因此 quota 字段会省略。
+
+Xiaomi MiMo Token Plan 的 `tp-*` key 用于 OpenCode 模型调用；小米当前的 usage endpoint 在 SSO 后台下，拒绝 `tp-*` key。要让 `/usage` 和 statusline quota/balance 字段显示小米额度，需要从已登录的浏览器会话设置 `XIAOMI_MIMO_SESSION_COOKIE`，不要把 cookie 写入仓库。
+
+如果只有 `tp-*` key，没有 cookie，小米模型仍可被识别；上下文、session tokens、session cost、TTFT、git diff 等不依赖 provider usage API 的 statusline 字段仍可正常显示，但小米额度相关字段会省略或在 `/usage` 中提示 cookie 缺失。
 
 详细 endpoint 说明见 [doc/provider-query-methods.md](doc/provider-query-methods.md)。
 

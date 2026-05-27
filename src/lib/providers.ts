@@ -60,6 +60,7 @@ type ProviderKind =
   | "zhipu"
   | "kimi"
   | "minimax-cn"
+  | "xiaomi-mimo"
   | "deepseek"
   | "opencode-go"
   | "openrouter"
@@ -111,6 +112,20 @@ function providerKind(providerID: string): ProviderKind {
   if (["zhipu", "zhipuai", "zhipu-coding-plan", "zhipuai-coding-plan"].includes(id)) return "zhipu";
   if (["kimi", "kimi-code", "kimi-for-coding"].includes(id)) return "kimi";
   if (["minimax", "minimax-china-coding-plan", "minimax-cn-coding-plan"].includes(id)) return "minimax-cn";
+  if ([
+    "mimo",
+    "mimo-token-plan",
+    "xiaomi",
+    "xiaomi-mimo",
+    "xiaomi-token-plan",
+    "xiaomi-token-plan-cn",
+    "xiaomi-token-plan-sgp",
+    "xiaomi-token-plan-ams",
+    "xiaomi-mimo-token-plan",
+    "xiaomi-mimo-token-plan-cn",
+    "xiaomi-mimo-token-plan-sgp",
+    "xiaomi-mimo-token-plan-ams"
+  ].includes(id)) return "xiaomi-mimo";
   if (id === "deepseek") return "deepseek";
   if (["opencode-go", "opencodego"].includes(id)) return "opencode-go";
   if (id === "openrouter") return "openrouter";
@@ -209,6 +224,23 @@ function resetAtFromDate(value: unknown): number | undefined {
   if (!raw) return undefined;
   const ms = Date.parse(raw);
   return Number.isFinite(ms) ? ms : undefined;
+}
+
+function formatCreditAmount(value: unknown): string | undefined {
+  const amount = toFiniteNumber(value);
+  if (amount === undefined) return undefined;
+  const sign = amount < 0 ? "-" : "";
+  const absolute = Math.abs(amount);
+  const units: Array<[string, number]> = [["T", 1_000_000_000_000], ["B", 1_000_000_000], ["M", 1_000_000], ["K", 1_000]];
+  const unit = units.find(([, size]) => absolute >= size);
+  if (!unit) return `${Math.round(amount)}`;
+  const scaled = absolute / unit[1];
+  const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+  const text = scaled
+    .toFixed(digits)
+    .replace(/(\.\d*?[1-9])0+$/, "$1")
+    .replace(/\.0+$/, "");
+  return `${sign}${text}${unit[0]}`;
 }
 
 function parseJwtPayload(token: string): Record<string, unknown> | undefined {
@@ -435,6 +467,88 @@ async function queryMiniMaxCN(input: {
     return report;
   } catch (err) {
     return errorReport({ ...input, auth: credential.source, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+function mimoUsageItems(data: Record<string, unknown>, key: "usage" | "monthUsage"): Record<string, unknown>[] {
+  const section = isRecord(data[key]) ? data[key] : undefined;
+  return Array.isArray(section?.items) ? section.items.filter(isRecord) : [];
+}
+
+function findMimoUsageItem(items: readonly Record<string, unknown>[], name: string): Record<string, unknown> | undefined {
+  return items.find((item) => item.name === name);
+}
+
+function addMimoWindow(
+  report: UsageReport,
+  item: Record<string, unknown> | undefined,
+  key: UsageWindowKey,
+  label: string
+): void {
+  if (!item) return;
+  const used = toFiniteNumber(item.used);
+  const total = toFiniteNumber(item.limit);
+  const usedPercent = toFiniteNumber(item.percent);
+  if (used === undefined && total === undefined && usedPercent === undefined) return;
+  report.windows.push(windowFromUsage({ key, label, used, total, usedPercent, unit: "credits" }));
+}
+
+async function queryXiaomiMiMo(input: {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+}): Promise<UsageReport> {
+  const cookie = toNonEmptyString(process.env.XIAOMI_MIMO_SESSION_COOKIE);
+  if (!cookie) {
+    return errorReport({
+      ...input,
+      error: "XIAOMI_MIMO_SESSION_COOKIE is required for Xiaomi MiMo Token Plan usage; Xiaomi rejects the tp-* API key on this endpoint"
+    });
+  }
+
+  try {
+    const payload = await fetchJson("https://platform.xiaomimimo.com/api/v1/tokenPlan/usage", {
+      headers: {
+        Accept: "application/json",
+        Cookie: cookie,
+        "User-Agent": USER_AGENT
+      }
+    });
+    if (!isRecord(payload)) throw new Error("Unexpected response shape");
+    const code = toFiniteNumber(payload.code);
+    if (code !== undefined && code !== 0) throw new Error(toNonEmptyString(payload.message) ?? `code ${code}`);
+    const data = isRecord(payload.data) ? payload.data : {};
+
+    const report = baseReport({
+      ...input,
+      auth: { type: "env", label: "XIAOMI_MIMO_SESSION_COOKIE" }
+    });
+    report.plan = "Xiaomi MiMo Token Plan";
+
+    const planItems = mimoUsageItems(data, "usage");
+    const monthItems = mimoUsageItems(data, "monthUsage");
+    const plan = findMimoUsageItem(planItems, "plan_total_token");
+    const compensation = findMimoUsageItem(planItems, "compensation_total_token");
+    const monthly = findMimoUsageItem(monthItems, "month_total_token");
+
+    addMimoWindow(report, plan, "other", "Plan quota");
+    addMimoWindow(report, compensation, "other", "Compensation quota");
+    addMimoWindow(report, monthly, "monthly", "Monthly quota");
+
+    const planUsed = toFiniteNumber(plan?.used);
+    const planLimit = toFiniteNumber(plan?.limit);
+    if (planUsed !== undefined && planLimit !== undefined && planLimit >= planUsed) {
+      const remaining = planLimit - planUsed;
+      report.balances.push({
+        label: "Credits remaining",
+        value: `${formatCreditAmount(remaining) ?? String(remaining)} credits`
+      });
+    }
+
+    if (report.windows.length === 0 && report.balances.length === 0) throw new Error("No usage rows found in response");
+    return report;
+  } catch (err) {
+    return errorReport({ ...input, auth: { type: "env", label: "XIAOMI_MIMO_SESSION_COOKIE" }, error: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -703,6 +817,9 @@ export async function collectProviderUsage(input: {
     case "minimax-cn":
       report = await queryMiniMaxCN(input);
       break;
+    case "xiaomi-mimo":
+      report = await queryXiaomiMiMo(input);
+      break;
     case "deepseek":
       report = await queryDeepSeek(input);
       break;
@@ -726,4 +843,3 @@ export async function collectProviderUsage(input: {
   cache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, report });
   return report;
 }
-

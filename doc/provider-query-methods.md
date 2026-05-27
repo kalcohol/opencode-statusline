@@ -2,7 +2,7 @@
 
 [中文](provider-query-methods.md) | [English](provider-query-methods.en.md) | [日本語](provider-query-methods.ja.md)
 
-本文记录 `opencode-statusline` 当前实现的 provider usage/quota 查询方法。实现入口在 `src/lib/providers.ts`，统一输出 `UsageReport`，供 `/usage` 对话框和 statusline quota 字段复用。
+本文记录 `opencode-statusline` 当前实现的 provider usage/quota 查询方法。实现入口在 `src/lib/providers.ts`，统一输出 `UsageReport`，供 `/usage` 对话框和 statusline quota/balance 字段复用。
 
 Statusline 的 `session_cost` 字段不走这里的 provider quota collector。它优先读取 OpenCode assistant message 上记录的 `cost`，没有记录时才用当前模型 catalog pricing 和 token 数估算等价成本。
 
@@ -35,6 +35,7 @@ API key 类 provider 按以下顺序解析凭据：
 | Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota，time quota |
 | Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage window，5h window when present |
 | MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h quota，weekly quota |
+| Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | `XIAOMI_MIMO_SESSION_COOKIE` for usage; `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY` for model calls | plan/compensation/monthly credits quota，credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance，availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label，remaining limit，usage totals |
 | OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h/weekly/monthly dashboard quota |
@@ -187,6 +188,54 @@ The implementation selects the `MiniMax-M*` wildcard row first, then a row match
 | --- | --- |
 | `current_interval_usage_count` / `current_interval_total_count`, `remains_time` | 5h quota |
 | `current_weekly_usage_count` / `current_weekly_total_count`, `weekly_remains_time` | weekly quota |
+
+## Xiaomi MiMo Token Plan
+
+Official Xiaomi docs list Token Plan API keys in `tp-xxxxx` format and OpenAI-compatible base URLs such as `https://token-plan-cn.xiaomimimo.com/v1`, `https://token-plan-sgp.xiaomimimo.com/v1`, and `https://token-plan-ams.xiaomimimo.com/v1`. Those keys are for model calls. The current usage endpoint is a console/SSO endpoint and rejects `tp-*` keys, so the plugin requires a logged-in browser cookie for usage lookup.
+
+Endpoint:
+
+```text
+GET https://platform.xiaomimimo.com/api/v1/tokenPlan/usage
+```
+
+Headers:
+
+```text
+Cookie: <XIAOMI_MIMO_SESSION_COOKIE>
+User-Agent: OpenCode-Statusline/0.1
+```
+
+Response shape:
+
+```json
+{
+  "code": 0,
+  "data": {
+    "usage": {
+      "items": [
+        { "name": "plan_total_token", "used": 12000000, "limit": 60000000, "percent": 20 },
+        { "name": "compensation_total_token", "used": 500000, "limit": 1000000, "percent": 50 }
+      ]
+    },
+    "monthUsage": {
+      "items": [
+        { "name": "month_total_token", "used": 12500000, "limit": 61000000, "percent": 20.49 }
+      ]
+    }
+  }
+}
+```
+
+Mapping:
+
+| Response item | Usage output |
+| --- | --- |
+| `usage.items[].name === "plan_total_token"` | Plan quota and `Credits remaining` balance |
+| `usage.items[].name === "compensation_total_token"` | Compensation quota |
+| `monthUsage.items[].name === "month_total_token"` | Monthly quota |
+
+The usage dialog displays credit windows with a `credits` suffix. The `Provider balance` statusline field uses `Credits remaining` and renders it compactly, for example `bal 48M credits`.
 
 ## DeepSeek
 

@@ -2,7 +2,7 @@
 
 [中文](provider-query-methods.md) | [English](provider-query-methods.en.md) | [日本語](provider-query-methods.ja.md)
 
-この文書は `opencode-statusline` が実装している provider usage/quota query methods を説明します。実装入口は `src/lib/providers.ts` で、provider-specific response を `UsageReport` に normalize し、`/usage` dialog と quota statusline fields で再利用します。
+この文書は `opencode-statusline` が実装している provider usage/quota query methods を説明します。実装入口は `src/lib/providers.ts` で、provider-specific response を `UsageReport` に normalize し、`/usage` dialog と quota/balance statusline fields で再利用します。
 
 Statusline の `session_cost` field は、この provider quota collector を使いません。まず OpenCode assistant message に記録された `cost` を読み、存在しない場合だけ current model catalog pricing と token counts から equivalent cost を推定します。
 
@@ -35,6 +35,7 @@ default `auth.json` locations：
 | Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota、time quota |
 | Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage window、存在する場合は 5h window |
 | MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h quota、weekly quota |
+| Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | usage は `XIAOMI_MIMO_SESSION_COOKIE`、model calls は `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY` | plan/compensation/monthly credits quota、credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance、availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、usage totals |
 | OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h/weekly/monthly dashboard quota |
@@ -187,6 +188,54 @@ Response shape：
 | --- | --- |
 | `current_interval_usage_count` / `current_interval_total_count`, `remains_time` | 5h quota |
 | `current_weekly_usage_count` / `current_weekly_total_count`, `weekly_remains_time` | weekly quota |
+
+## Xiaomi MiMo Token Plan
+
+Xiaomi 公式 docs では Token Plan API key は `tp-xxxxx` format で、OpenAI-compatible base URL は `https://token-plan-cn.xiaomimimo.com/v1`、`https://token-plan-sgp.xiaomimimo.com/v1`、`https://token-plan-ams.xiaomimimo.com/v1` などです。これらの key は model calls 用です。現在の usage endpoint は console/SSO endpoint で、`tp-*` key は拒否されるため、plugin は usage lookup に logged-in browser cookie を必要とします。
+
+Endpoint：
+
+```text
+GET https://platform.xiaomimimo.com/api/v1/tokenPlan/usage
+```
+
+Headers：
+
+```text
+Cookie: <XIAOMI_MIMO_SESSION_COOKIE>
+User-Agent: OpenCode-Statusline/0.1
+```
+
+Response shape：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "usage": {
+      "items": [
+        { "name": "plan_total_token", "used": 12000000, "limit": 60000000, "percent": 20 },
+        { "name": "compensation_total_token", "used": 500000, "limit": 1000000, "percent": 50 }
+      ]
+    },
+    "monthUsage": {
+      "items": [
+        { "name": "month_total_token", "used": 12500000, "limit": 61000000, "percent": 20.49 }
+      ]
+    }
+  }
+}
+```
+
+Mapping：
+
+| Response item | Usage output |
+| --- | --- |
+| `usage.items[].name === "plan_total_token"` | Plan quota と `Credits remaining` balance |
+| `usage.items[].name === "compensation_total_token"` | Compensation quota |
+| `monthUsage.items[].name === "month_total_token"` | Monthly quota |
+
+usage dialog は credit windows に `credits` suffix を付けて表示します。`Provider balance` statusline field は `Credits remaining` を使い、たとえば `bal 48M credits` のように compact に描画します。
 
 ## DeepSeek
 
