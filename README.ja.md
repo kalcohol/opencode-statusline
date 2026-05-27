@@ -140,11 +140,14 @@ reset 時刻はローカル時刻で、固定幅の `YYYY-MM-DD HH:mm:ss` 形式
 | Main agent status | 現在の main session 状態。`agent` prefix は付けません |
 | 5h quota | provider の 5h quota 使用率。利用可能な場合のみ表示 |
 | Weekly quota | provider の weekly quota 使用率。利用可能な場合のみ表示 |
+| Provider balance | provider が返す prepaid balance または remaining limit。`bal $12.34` 形式 |
 | Session input/output tokens | session と child-session の累計 input/output tokens。`<input> in / <output> out` 形式 |
 | Session total tokens | session と child-session の累計 total tokens。`<total> used` 形式。OpenCode が reasoning/cache tokens を出す場合は含めます |
 | Session cost | session と child-session の累計 cost。`cost $0.02` 形式。model pricing から推定した場合は `eq $0.02` と表示します |
 
 利用できない provider/model データは省略されます。たとえば OpenRouter は balance と usage totals を持ちますが、coding plan と同じ意味の 5h subscription quota window はないため `5h quota` は表示されません。
+
+`Provider balance` は `/usage` dialog の balance rows を再利用します。remaining/limit remaining を優先し、次に balance/credits rows を表示します。DeepSeek、OpenRouter、OpenAI/Codex credits など balance data がある provider では表示され、money amount のない純粋な subscription quota data では省略されます。
 
 `Git diff stats` はローカル git worktree だけを読みます。HEAD に対する tracked file の変更を `git diff --numstat` と `git diff --cached --numstat` から合計します。untracked file と binary file は含めません。このフィールドは statusline refresh で再計算され、session 更新時に短い cache をクリアするため、streaming output 中に git process を過剰に起動しません。
 

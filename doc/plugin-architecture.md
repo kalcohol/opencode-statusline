@@ -103,11 +103,14 @@ Supported fields:
 | `agent_status` | main session status without an `agent` prefix |
 | `quota_5h` | provider 5h quota used percent |
 | `quota_weekly` | provider weekly quota used percent |
+| `provider_balance` | provider balance or remaining limit as `bal $12.34` |
 | `session_io` | session input/output tokens as `<input> in / <output> out` |
 | `session_total` | session total tokens as `<total> used` |
 | `session_cost` | session cost as `cost $0.02` or equivalent estimate as `eq $0.02` |
 
 Unavailable values are omitted. For example, OpenRouter has balance/usage data but no 5h subscription quota window, so `quota_5h` does not render for OpenRouter. Child sessions that are idle or completed are treated as no active subagent, so `subagent_status` is omitted in that state.
+
+`provider_balance` reuses `UsageReport.balances`, the same normalized rows shown by `/usage`. It prefers labels containing `remaining`, then `balance`, then `credit`, and renders only numeric money-like values. Pure subscription quota providers with no balance row omit the field.
 
 `git_diff_stats` uses local git commands only when the field is selected. It sums `git diff --no-ext-diff --numstat --` and `git diff --cached --no-ext-diff --numstat --` for tracked file changes relative to HEAD, skips binary rows, and does not include untracked files. Results are cached briefly to avoid running git on every streaming delta; `session.updated` clears the cache so the value refreshes when a session finishes.
 
@@ -126,6 +129,7 @@ TUI rendering uses colored segments:
 - generation metrics: info
 - agent/subagent: primary
 - quota: warning
+- provider balance: success
 - session token totals: secondary
 - session cost: success
 - separators and truncation marker: muted

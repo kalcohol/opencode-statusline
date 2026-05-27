@@ -2,8 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildTuiStatusline } from "../src/lib/statusline.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildTuiStatusline, providerBalanceText } from "../src/lib/statusline.js";
 
 const previousConfigPath = process.env.OPENCODE_STATUSLINE_CONFIG;
 const previousStateDir = process.env.OPENCODE_STATUSLINE_STATE_DIR;
@@ -99,6 +99,7 @@ describe("buildTuiStatusline", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     if (previousConfigPath === undefined) delete process.env.OPENCODE_STATUSLINE_CONFIG;
     else process.env.OPENCODE_STATUSLINE_CONFIG = previousConfigPath;
     if (previousStateDir === undefined) delete process.env.OPENCODE_STATUSLINE_STATE_DIR;
@@ -149,6 +150,44 @@ describe("buildTuiStatusline", () => {
     };
 
     await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("+2,-1");
+  });
+
+  it("renders provider balance from usage balance data", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["provider_balance"] }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { limit_remaining: 42.5, limit: 100 } }),
+      text: async () => ""
+    } as Response);
+    const api = {
+      state: {
+        config: { model: "openrouter/model-balance" },
+        provider: [{ id: "openrouter", name: "OpenRouter", key: "test-token", models: { "model-balance": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-balance" } }),
+          messages: () => [],
+          status: () => ({ type: "idle" })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("bal $42.50");
+  });
+
+  it("prefers remaining balance rows for compact provider balance text", () => {
+    expect(providerBalanceText({
+      ok: true,
+      providerID: "provider",
+      generatedAtMs: 0,
+      windows: [],
+      balances: [
+        { label: "USD balance", value: "$80.00" },
+        { label: "Limit remaining", value: "$42.50" }
+      ],
+      items: []
+    })).toBe("bal $42.50");
   });
 
   it("keeps the last complete generation metrics while a new response is incomplete", async () => {

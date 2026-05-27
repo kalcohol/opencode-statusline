@@ -103,11 +103,14 @@ Statusline fields は `src/lib/statusline.ts` で構築されます。
 | `agent_status` | main session status。`agent` prefix は付けません |
 | `quota_5h` | provider 5h quota used percent |
 | `quota_weekly` | provider weekly quota used percent |
+| `provider_balance` | provider balance または remaining limit as `bal $12.34` |
 | `session_io` | session input/output tokens as `<input> in / <output> out` |
 | `session_total` | session total tokens as `<total> used` |
 | `session_cost` | session cost as `cost $0.02`、または equivalent estimate as `eq $0.02` |
 
 利用できない値は省略されます。たとえば OpenRouter は balance/usage data を持ちますが 5h subscription quota window はないため、`quota_5h` は描画されません。child sessions が idle または completed の場合、active subagent なしとして扱い、`subagent_status` は省略します。
+
+`provider_balance` は `/usage` と同じ normalized rows である `UsageReport.balances` を再利用します。`remaining` を含む label を優先し、次に `balance`、`credit` を優先します。numeric な money-like value だけを描画します。balance row がない純粋な subscription quota provider では field を省略します。
 
 `git_diff_stats` は field が選択されている場合だけ local git command を使います。HEAD に対する tracked file の変更について、`git diff --no-ext-diff --numstat --` と `git diff --cached --no-ext-diff --numstat --` を合計し、binary rows は skip し、untracked files は含めません。streaming delta ごとに git を実行しないよう短く cache し、`session.updated` で cache を clear して session 完了時に値を refresh します。
 
@@ -126,6 +129,7 @@ TUI rendering は colored segments を使います：
 - generation metrics: info
 - agent/subagent: primary
 - quota: warning
+- provider balance: success
 - session token totals: secondary
 - session cost: success
 - separators and truncation marker: muted

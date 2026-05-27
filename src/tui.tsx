@@ -429,6 +429,8 @@ function statuslineSegmentColor(theme: TuiPluginApi["theme"]["current"], segment
       return theme.warning;
     case "quota_weekly":
       return theme.warning;
+    case "provider_balance":
+      return theme.success;
     case "session_io":
       return theme.secondary;
     case "session_total":

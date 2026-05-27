@@ -365,11 +365,11 @@ Provider id `opencode` は認識されますが、OpenCode Zen は現在 public 
 | Field | Meaning |
 | --- | --- |
 | `windows[]` | 5h、daily、weekly、monthly、code review などの quota windows |
-| `balances[]` | account balance-like rows |
+| `balances[]` | `/usage` と `Provider balance` statusline field が使う account balance-like rows |
 | `items[]` | key label、model row、free tier、plan details などの miscellaneous labels |
 | `usedPercent` / `remainingPercent` | `0..100` に clamp |
 | `resetAtMs` / `resetAfterMs` | UI formatting で reset time を表示するために使用 |
 
 absolute reset timestamps は `/usage` で local time の固定幅 `YYYY-MM-DD HH:mm:ss` fields として表示します。relative reset durations は compact duration text のままです。
 
-Quota collection は provider/model kind ごとに 60 秒 cache されます。`/usage` は fresh read を強制し、statusline quota fields は cache を使い、statusline 側で 1 秒 timeout も適用します。
+Quota collection は provider/model kind ごとに 60 秒 cache されます。`/usage` は fresh read を強制し、statusline quota/balance fields は cache を使い、statusline 側で 1 秒 timeout も適用します。

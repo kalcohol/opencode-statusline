@@ -1,6 +1,12 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { collectProviderUsage, findUsageWindow, type ProviderInfoLike } from "./providers.js";
+import {
+  collectProviderUsage,
+  findUsageWindow,
+  type ProviderInfoLike,
+  type UsageBalance,
+  type UsageReport
+} from "./providers.js";
 import { resolveActiveModel, type MinimalOpencodeClient } from "./opencode-client.js";
 import {
   basename,
@@ -578,6 +584,28 @@ function quotaText(window: ReturnType<typeof findUsageWindow>, label: string): s
   return `${label} ${formatPercent(window.usedPercent)}`;
 }
 
+function providerBalanceRank(balance: UsageBalance): number {
+  const label = balance.label.toLowerCase();
+  if (label.includes("remaining")) return 0;
+  if (label.includes("balance")) return 1;
+  if (label.includes("credit")) return 2;
+  return 3;
+}
+
+function displayableBalanceValue(balance: UsageBalance): string | undefined {
+  const value = toNonEmptyString(balance.value);
+  return value && /\d/.test(value) ? value : undefined;
+}
+
+export function providerBalanceText(report: UsageReport | undefined): string | undefined {
+  if (!report?.ok) return undefined;
+  const selected = report.balances
+    .map((balance, index) => ({ balance, index, rank: providerBalanceRank(balance), value: displayableBalanceValue(balance) }))
+    .filter((item): item is { balance: UsageBalance; index: number; rank: number; value: string } => Boolean(item.value))
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)[0];
+  return selected ? `bal ${selected.value}` : undefined;
+}
+
 export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string): Promise<TuiStatuslinePart[]> {
   const fields = loadStatuslineConfig().fields;
   if (fields.length === 0) return [];
@@ -598,7 +626,8 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
     : undefined;
 
   let quotaReport;
-  if (meta.providerID && (fields.includes("quota_5h") || fields.includes("quota_weekly"))) {
+  const providerUsageFields = fields.some((field) => ["quota_5h", "quota_weekly", "provider_balance"].includes(field));
+  if (meta.providerID && providerUsageFields) {
     quotaReport = await withTimeout(
       collectProviderUsage({
         providerID: meta.providerID,
@@ -686,6 +715,8 @@ async function renderField(input: {
       return quotaText(findUsageWindow(input.quotaReport, "fiveHour"), "5h");
     case "quota_weekly":
       return quotaText(findUsageWindow(input.quotaReport, "weekly"), "week");
+    case "provider_balance":
+      return providerBalanceText(input.quotaReport);
     case "session_io":
       return `${formatTokenAmount(input.sessionTokens.input)} in / ${formatTokenAmount(input.sessionTokens.output)} out`;
     case "session_total":

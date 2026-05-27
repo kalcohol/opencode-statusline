@@ -18,6 +18,7 @@ export const STATUSLINE_FIELDS = [
   { id: "agent_status", label: "Main agent status", aliases: ["agent", "status"] },
   { id: "quota_5h", label: "5h quota", aliases: ["5h", "quota5h", "five_hour"] },
   { id: "quota_weekly", label: "Weekly quota", aliases: ["week", "weekly", "quota_week"] },
+  { id: "provider_balance", label: "Provider balance", aliases: ["balance", "bal", "credits", "credit", "remaining_balance", "limit_remaining", "money_left"] },
   { id: "session_io", label: "Session input/output tokens", aliases: ["io", "tokens_io"] },
   { id: "session_total", label: "Session total tokens", aliases: ["tokens", "total_tokens"] },
   { id: "session_cost", label: "Session cost", aliases: ["cost", "spend", "spent", "money", "price", "usd"] }

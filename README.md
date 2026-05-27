@@ -140,11 +140,14 @@ OpenCode 会从当前项目目录向上查找 `tui.json(c)` 和 `opencode.json(c
 | Main agent status | 当前主 session 状态，不带 `agent` 前缀 |
 | 5h quota | provider 5h quota 使用百分比，有数据时显示 |
 | Weekly quota | provider weekly quota 使用百分比，有数据时显示 |
+| Provider balance | provider 返回的预付费余额或 remaining limit，格式为 `bal $12.34` |
 | Session input/output tokens | 当前 session 和 child-session 累计输入/输出 token，格式为 `<input> in / <output> out` |
 | Session total tokens | 当前 session 和 child-session 累计总 token，格式为 `<total> used`；OpenCode 暴露 reasoning/cache token 时会计入 |
 | Session cost | 当前 session 和 child-session 累计成本，格式为 `cost $0.02`；按模型价格估算时显示为 `eq $0.02` |
 
 没有的数据会自动省略。例如 OpenRouter 有 balance 和 usage totals，但没有 coding plan 意义上的 5h subscription quota window，因此不会显示 `5h quota`。
+
+`Provider balance` 复用 `/usage` dialog 的余额数据，优先显示 remaining/limit remaining，其次显示 balance/credits。DeepSeek、OpenRouter、OpenAI/Codex credits 等 provider 有余额数据时会显示；纯订阅 quota 没有钱数时会省略。
 
 `Git diff stats` 只读取本地 git 工作树，使用 `git diff --numstat` 和 `git diff --cached --numstat` 汇总 tracked 文件相对 HEAD 的变化；未跟踪文件和二进制文件不会计入。该字段随 statusline 刷新重算，并在 session 更新时清除短缓存，避免流式输出期间频繁执行 git。
 

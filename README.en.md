@@ -140,11 +140,14 @@ Available fields:
 | Main agent status | current main session status, without an `agent` prefix |
 | 5h quota | provider 5h quota used percent, when available |
 | Weekly quota | provider weekly quota used percent, when available |
+| Provider balance | prepaid balance or remaining limit reported by the provider as `bal $12.34` |
 | Session input/output tokens | accumulated session and child-session input/output tokens as `<input> in / <output> out` |
 | Session total tokens | accumulated session and child-session total tokens as `<total> used`; includes reasoning/cache tokens when OpenCode exposes them |
 | Session cost | accumulated session and child-session cost as `cost $0.02`; shows `eq $0.02` when estimated from model pricing |
 
 Unavailable provider/model data is omitted. For example, OpenRouter has balance and usage totals, but no 5h subscription quota window.
+
+`Provider balance` reuses the balance rows shown by `/usage`. It prefers remaining/limit remaining rows, then balance/credits rows. It renders for providers with balance data such as DeepSeek, OpenRouter, and OpenAI/Codex credits, and is omitted for pure subscription quota data with no money amount.
 
 `Git diff stats` reads only the local git worktree. It sums tracked-file changes from `git diff --numstat` and `git diff --cached --numstat` relative to HEAD; untracked files and binary files are not included. The field is recomputed on statusline refresh and clears its short cache when the session updates, avoiding repeated git processes during streaming output.
 

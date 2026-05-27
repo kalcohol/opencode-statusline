@@ -24,4 +24,8 @@ describe("parseStatuslineFieldArguments", () => {
   it("supports git diff aliases", () => {
     expect(parseStatuslineFieldArguments("diff changes git_diff").fields).toEqual(["git_diff_stats"]);
   });
+
+  it("supports provider balance aliases", () => {
+    expect(parseStatuslineFieldArguments("balance credits limit_remaining").fields).toEqual(["provider_balance"]);
+  });
 });
