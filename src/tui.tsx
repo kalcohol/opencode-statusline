@@ -4,7 +4,7 @@ import type { JSX } from "@opentui/solid";
 import { useTerminalDimensions } from "@opentui/solid";
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { buildTuiStatuslineParts } from "./lib/statusline.js";
+import { buildTuiStatuslineParts, invalidateGitDiffStatsCache } from "./lib/statusline.js";
 import { buildTuiUsageText } from "./lib/tui-usage.js";
 import { readRecentModelStateFromFile } from "./lib/opencode-client.js";
 import type { ProviderInfoLike } from "./lib/providers.js";
@@ -409,6 +409,8 @@ function statuslineSegmentColor(theme: TuiPluginApi["theme"]["current"], segment
       return theme.text;
     case "branch":
       return theme.info;
+    case "git_diff_stats":
+      return theme.warning;
     case "context_used":
       return theme.accent;
     case "context_remaining":
@@ -504,7 +506,10 @@ function StatuslineView(props: {
   const unsubscribers = [
     onConfigChanged(queueReload),
     props.api.event.on("session.updated", (event) => {
-      if ((event as any).properties?.info?.id === props.sessionID) queueReload();
+      if ((event as any).properties?.info?.id === props.sessionID) {
+        invalidateGitDiffStatsCache();
+        queueReload();
+      }
     }),
     props.api.event.on("message.updated", (event) => {
       if ((event as any).properties?.info?.sessionID === props.sessionID) queueReload();

@@ -8,6 +8,7 @@ export const STATUSLINE_CONFIG_VERSION = 1;
 export const STATUSLINE_FIELDS = [
   { id: "repo", label: "Repository", aliases: ["repository", "project"] },
   { id: "branch", label: "Branch", aliases: ["git"] },
+  { id: "git_diff_stats", label: "Git diff stats", aliases: ["diff", "changes", "git_diff", "git_changes", "lines", "loc", "delta"] },
   { id: "context_used", label: "Context used", aliases: ["ctx", "ctx_used", "context"] },
   { id: "context_remaining", label: "Context remaining", aliases: ["ctx_left", "left"] },
   { id: "context_length", label: "Context length", aliases: ["context_limit", "ctx_limit", "ctx_max", "model_context", "window"] },

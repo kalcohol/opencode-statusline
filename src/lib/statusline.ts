@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { collectProviderUsage, findUsageWindow, type ProviderInfoLike } from "./providers.js";
 import { resolveActiveModel, type MinimalOpencodeClient } from "./opencode-client.js";
 import {
@@ -11,6 +13,9 @@ import {
 import { loadStatuslineConfig, type StatuslineFieldID } from "./statusline-config.js";
 
 const STATUSLINE_QUOTA_TIMEOUT_MS = 1_000;
+const GIT_DIFF_TIMEOUT_MS = 750;
+const GIT_DIFF_CACHE_TTL_MS = 1_500;
+const execFileAsync = promisify(execFile);
 
 type TuiApiLike = {
   state: {
@@ -70,6 +75,20 @@ type GenerationMetrics = {
   ttftMs?: number;
   tokensPerSecond?: number;
 };
+
+type GitDiffStats = {
+  added: number;
+  removed: number;
+};
+
+const gitDiffStatsCache = new Map<string, {
+  loadedAt: number;
+  value: Promise<GitDiffStats | undefined>;
+}>();
+
+export function invalidateGitDiffStatsCache(): void {
+  gitDiffStatsCache.clear();
+}
 
 export type TuiStatuslinePart = {
   field: StatuslineFieldID;
@@ -403,6 +422,64 @@ function generationMetricsText(metrics: GenerationMetrics | undefined): string |
   return parts.length ? parts.join(" ") : undefined;
 }
 
+function parseGitNumstat(stdout: string): GitDiffStats {
+  const stats: GitDiffStats = { added: 0, removed: 0 };
+  for (const line of stdout.split("\n")) {
+    const [addedRaw, removedRaw] = line.split("\t", 3);
+    const added = Number(addedRaw);
+    const removed = Number(removedRaw);
+    if (!Number.isFinite(added) || !Number.isFinite(removed)) continue;
+    stats.added += added;
+    stats.removed += removed;
+  }
+  return stats;
+}
+
+async function runGitNumstat(cwd: string, args: string[]): Promise<GitDiffStats | undefined> {
+  try {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd,
+      encoding: "utf8",
+      timeout: GIT_DIFF_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024
+    });
+    return parseGitNumstat(stdout);
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadGitDiffStats(cwd: string): Promise<GitDiffStats | undefined> {
+  const [unstaged, staged] = await Promise.all([
+    runGitNumstat(cwd, ["diff", "--no-ext-diff", "--numstat", "--"]),
+    runGitNumstat(cwd, ["diff", "--cached", "--no-ext-diff", "--numstat", "--"])
+  ]);
+  if (!unstaged && !staged) return undefined;
+
+  const stats = {
+    added: (unstaged?.added ?? 0) + (staged?.added ?? 0),
+    removed: (unstaged?.removed ?? 0) + (staged?.removed ?? 0)
+  };
+  return stats.added > 0 || stats.removed > 0 ? stats : undefined;
+}
+
+async function gitDiffStats(api: TuiApiLike): Promise<GitDiffStats | undefined> {
+  const cwd = toNonEmptyString(api.state.path.worktree) ?? toNonEmptyString(api.state.path.directory);
+  if (!cwd) return undefined;
+
+  const now = Date.now();
+  const cached = gitDiffStatsCache.get(cwd);
+  if (cached && now - cached.loadedAt < GIT_DIFF_CACHE_TTL_MS) return cached.value;
+
+  const value = loadGitDiffStats(cwd);
+  gitDiffStatsCache.set(cwd, { loadedAt: now, value });
+  return value;
+}
+
+function gitDiffStatsText(stats: GitDiffStats | undefined): string | undefined {
+  return stats ? `+${stats.added},-${stats.removed}` : undefined;
+}
+
 function sessionStatusLabel(status: unknown): string | undefined {
   if (!isRecord(status)) return undefined;
   const type = toNonEmptyString(status.type);
@@ -511,6 +588,7 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
   const contextUsed = latestContextTokens(messages);
   const contextLimit = modelContextLimit(provider, meta.modelID);
   const generationMetrics = latestGenerationMetrics(api, messages);
+  const diffStats = fields.includes("git_diff_stats") ? await gitDiffStats(api) : undefined;
   const childFields = fields.some((field) => ["subagent_status", "session_io", "session_total", "session_cost"].includes(field));
   const children = childFields ? await getChildSessions(api, sessionID) : [];
   const allMessages = childFields ? await sessionMessagesWithChildren(api, messages, children) : messages;
@@ -544,6 +622,7 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
       contextUsed,
       contextLimit,
       generationMetrics,
+      gitDiffStats: diffStats,
       children,
       sessionTokens,
       sessionCost: cost,
@@ -568,6 +647,7 @@ async function renderField(input: {
   contextUsed: number;
   contextLimit?: number;
   generationMetrics?: GenerationMetrics;
+  gitDiffStats?: GitDiffStats;
   children?: readonly unknown[];
   sessionTokens: TokenTotals;
   sessionCost?: SessionCost;
@@ -578,6 +658,8 @@ async function renderField(input: {
       return basename(input.api.state.path.worktree) ?? basename(input.api.state.path.directory);
     case "branch":
       return input.api.state.vcs?.branch;
+    case "git_diff_stats":
+      return gitDiffStatsText(input.gitDiffStats);
     case "context_used":
       return `ctx ${formatTokenAmount(input.contextUsed)}`;
     case "context_remaining":

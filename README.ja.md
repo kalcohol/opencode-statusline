@@ -130,6 +130,7 @@ reset 時刻はローカル時刻で、固定幅の `YYYY-MM-DD HH:mm:ss` 形式
 | --- | --- |
 | Repository | worktree または directory の basename |
 | Branch | 現在の git branch 名 |
+| Git diff stats | tracked file の staged+unstaged git diff 行数。`+123,-45` 形式 |
 | Context used | 最新 assistant message の context token 推定値 |
 | Context remaining | model context limit から現在の context 推定値を引いた値 |
 | Context length | 現在の model context limit |
@@ -144,6 +145,8 @@ reset 時刻はローカル時刻で、固定幅の `YYYY-MM-DD HH:mm:ss` 形式
 | Session cost | session と child-session の累計 cost。`cost $0.02` 形式。model pricing から推定した場合は `eq $0.02` と表示します |
 
 利用できない provider/model データは省略されます。たとえば OpenRouter は balance と usage totals を持ちますが、coding plan と同じ意味の 5h subscription quota window はないため `5h quota` は表示されません。
+
+`Git diff stats` はローカル git worktree だけを読みます。HEAD に対する tracked file の変更を `git diff --numstat` と `git diff --cached --numstat` から合計します。untracked file と binary file は含めません。このフィールドは statusline refresh で再計算され、session 更新時に短い cache をクリアするため、streaming output 中に git process を過剰に起動しません。
 
 subscription や coding plan provider では、`Session cost` は実際の課金額ではなく token 単価による等価推定になることがあります。OpenCode が message に記録した cost を優先し、ない場合だけ model catalog pricing へ fallback します。
 

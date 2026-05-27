@@ -93,6 +93,7 @@ Supported fields:
 | --- | --- |
 | `repo` | repository/worktree basename |
 | `branch` | current git branch, without a `git` prefix |
+| `git_diff_stats` | tracked staged+unstaged git diff line counts as `+123,-45` |
 | `context_used` | latest assistant message token total |
 | `context_remaining` | model context limit minus current context estimate |
 | `context_length` | current model context limit |
@@ -108,6 +109,8 @@ Supported fields:
 
 Unavailable values are omitted. For example, OpenRouter has balance/usage data but no 5h subscription quota window, so `quota_5h` does not render for OpenRouter. Child sessions that are idle or completed are treated as no active subagent, so `subagent_status` is omitted in that state.
 
+`git_diff_stats` uses local git commands only when the field is selected. It sums `git diff --no-ext-diff --numstat --` and `git diff --cached --no-ext-diff --numstat --` for tracked file changes relative to HEAD, skips binary rows, and does not include untracked files. Results are cached briefly to avoid running git on every streaming delta; `session.updated` clears the cache so the value refreshes when a session finishes.
+
 `session_io`, `session_total`, and `session_cost` include child-session messages when OpenCode exposes those child sessions. `session_total` uses OpenCode's explicit total token value when present; otherwise it sums input, output, reasoning, and cache tokens.
 
 `session_cost` prefers OpenCode's recorded assistant message cost. If recorded cost is absent, it estimates an equivalent cost from model catalog pricing and input/output/cache token counts. This is useful for subscription or coding-plan providers, but `eq $...` should be read as a per-token equivalent estimate, not necessarily actual billing.
@@ -118,6 +121,7 @@ TUI rendering uses colored segments:
 
 - repo: normal text
 - branch: info
+- git diff stats: warning
 - context: accent/success/secondary
 - generation metrics: info
 - agent/subagent: primary

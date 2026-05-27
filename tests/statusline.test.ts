@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildTuiStatusline } from "../src/lib/statusline.js";
 
@@ -121,6 +122,33 @@ describe("buildTuiStatusline", () => {
     fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["generation_metrics"] }));
 
     await expect(buildTuiStatusline(apiWithGenerationMetrics() as any, "ses_1")).resolves.toBe("ttft 600ms gen 40 tok/s");
+  });
+
+  it("renders tracked git diff insertion and deletion counts", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["git_diff_stats"] }));
+    execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir, stdio: "ignore" });
+    fs.writeFileSync(path.join(tempDir, "file.txt"), "one\ntwo\nthree\n");
+    execFileSync("git", ["add", "file.txt"], { cwd: tempDir, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: tempDir, stdio: "ignore" });
+    fs.writeFileSync(path.join(tempDir, "file.txt"), "one\nTWO\nthree\nfour\n");
+
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: tempDir, directory: tempDir },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [],
+          status: () => ({ type: "idle" })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("+2,-1");
   });
 
   it("keeps the last complete generation metrics while a new response is incomplete", async () => {

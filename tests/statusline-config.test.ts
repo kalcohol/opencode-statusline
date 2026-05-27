@@ -20,4 +20,8 @@ describe("parseStatuslineFieldArguments", () => {
   it("supports session cost aliases", () => {
     expect(parseStatuslineFieldArguments("cost spent usd").fields).toEqual(["session_cost"]);
   });
+
+  it("supports git diff aliases", () => {
+    expect(parseStatuslineFieldArguments("diff changes git_diff").fields).toEqual(["git_diff_stats"]);
+  });
 });

@@ -130,6 +130,7 @@ OpenCode 会从当前项目目录向上查找 `tui.json(c)` 和 `opencode.json(c
 | --- | --- |
 | Repository | worktree 或目录 basename |
 | Branch | 当前 git 分支名 |
+| Git diff stats | tracked 文件的 staged+unstaged 增删行数，格式为 `+123,-45` |
 | Context used | 最新 assistant 消息的上下文 token 估算 |
 | Context remaining | 模型上下文上限减去当前上下文估算 |
 | Context length | 当前模型上下文上限 |
@@ -144,6 +145,8 @@ OpenCode 会从当前项目目录向上查找 `tui.json(c)` 和 `opencode.json(c
 | Session cost | 当前 session 和 child-session 累计成本，格式为 `cost $0.02`；按模型价格估算时显示为 `eq $0.02` |
 
 没有的数据会自动省略。例如 OpenRouter 有 balance 和 usage totals，但没有 coding plan 意义上的 5h subscription quota window，因此不会显示 `5h quota`。
+
+`Git diff stats` 只读取本地 git 工作树，使用 `git diff --numstat` 和 `git diff --cached --numstat` 汇总 tracked 文件相对 HEAD 的变化；未跟踪文件和二进制文件不会计入。该字段随 statusline 刷新重算，并在 session 更新时清除短缓存，避免流式输出期间频繁执行 git。
 
 对于订阅制或 coding plan provider，`Session cost` 可能只是按 token 单价折算的等价估算，不一定代表真实扣费。它优先使用 OpenCode 记录在 message 上的 cost；没有记录时才回退到模型 catalog pricing。
 

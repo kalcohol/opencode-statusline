@@ -130,6 +130,7 @@ Available fields:
 | --- | --- |
 | Repository | worktree or directory basename |
 | Branch | current git branch name |
+| Git diff stats | tracked staged+unstaged git diff line counts as `+123,-45` |
 | Context used | latest assistant context token estimate |
 | Context remaining | model context limit minus current context estimate |
 | Context length | current model context limit |
@@ -144,6 +145,8 @@ Available fields:
 | Session cost | accumulated session and child-session cost as `cost $0.02`; shows `eq $0.02` when estimated from model pricing |
 
 Unavailable provider/model data is omitted. For example, OpenRouter has balance and usage totals, but no 5h subscription quota window.
+
+`Git diff stats` reads only the local git worktree. It sums tracked-file changes from `git diff --numstat` and `git diff --cached --numstat` relative to HEAD; untracked files and binary files are not included. The field is recomputed on statusline refresh and clears its short cache when the session updates, avoiding repeated git processes during streaming output.
 
 For subscription or coding-plan providers, `Session cost` may be an equivalent per-token estimate rather than an actual amount charged. It prefers OpenCode's recorded message cost when present, then falls back to model catalog pricing.
 

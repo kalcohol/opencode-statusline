@@ -93,6 +93,7 @@ Statusline fields は `src/lib/statusline.ts` で構築されます。
 | --- | --- |
 | `repo` | repository/worktree basename |
 | `branch` | current git branch。`git` prefix は付けません |
+| `git_diff_stats` | tracked staged+unstaged git diff line counts as `+123,-45` |
 | `context_used` | latest assistant message token total |
 | `context_remaining` | model context limit から current context estimate を引いた値 |
 | `context_length` | current model context limit |
@@ -108,6 +109,8 @@ Statusline fields は `src/lib/statusline.ts` で構築されます。
 
 利用できない値は省略されます。たとえば OpenRouter は balance/usage data を持ちますが 5h subscription quota window はないため、`quota_5h` は描画されません。child sessions が idle または completed の場合、active subagent なしとして扱い、`subagent_status` は省略します。
 
+`git_diff_stats` は field が選択されている場合だけ local git command を使います。HEAD に対する tracked file の変更について、`git diff --no-ext-diff --numstat --` と `git diff --cached --no-ext-diff --numstat --` を合計し、binary rows は skip し、untracked files は含めません。streaming delta ごとに git を実行しないよう短く cache し、`session.updated` で cache を clear して session 完了時に値を refresh します。
+
 `session_io`、`session_total`、`session_cost` は、OpenCode が child sessions を公開している場合に child-session messages を含めます。`session_total` は OpenCode の explicit total token value があればそれを使い、ない場合は input、output、reasoning、cache tokens を合計します。
 
 `session_cost` は OpenCode が assistant message に記録した cost を優先します。recorded cost がない場合、model catalog pricing と input/output/cache token counts から equivalent cost を推定します。subscription や coding-plan provider では便利ですが、`eq $...` は per-token equivalent estimate であり、必ずしも実際の billing ではありません。
@@ -118,6 +121,7 @@ TUI rendering は colored segments を使います：
 
 - repo: normal text
 - branch: info
+- git diff stats: warning
 - context: accent/success/secondary
 - generation metrics: info
 - agent/subagent: primary
