@@ -21,30 +21,74 @@ Statusline fields appended to the OpenCode prompt:
 
 ## Install
 
-Build the package first:
+Clone and build the plugin:
 
 ```sh
+git clone https://github.com/kalcohol/opencode-statusline.git
+cd opencode-statusline
 npm install
 npm run build
 ```
 
-Add this package path to OpenCode's TUI config:
+Get the absolute path to the cloned package:
+
+```sh
+pwd
+```
+
+Add that package path to OpenCode's TUI config. The usual global config file is:
+
+```text
+${XDG_CONFIG_HOME:-~/.config}/opencode/tui.jsonc
+```
+
+Create the directory/file if needed:
+
+```sh
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+${EDITOR:-vi} "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/tui.jsonc"
+```
+
+Use the absolute path printed by `pwd`:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/tui.json",
-  "plugin": ["<path-to-this-repo>"]
+  "plugin": ["/absolute/path/to/opencode-statusline"]
 }
 ```
 
-Restart the OpenCode TUI after changing plugin config or rebuilding the package.
+If the file already has plugins, append this package path to the existing `plugin` array:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/tui.json",
+  "plugin": [
+    "/absolute/path/to/another-plugin",
+    "/absolute/path/to/opencode-statusline"
+  ]
+}
+```
+
+Restart the OpenCode TUI after changing plugin config or rebuilding the package. Then run `/usage` or `/statusline` inside OpenCode to verify the plugin is loaded.
+
+To update an existing clone:
+
+```sh
+cd /absolute/path/to/opencode-statusline
+git pull
+npm install
+npm run build
+```
+
+Then restart the OpenCode TUI.
 
 `opencode.json` is not required for the current plugin, but keeping the same package path there is harmless:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["<path-to-this-repo>"]
+  "plugin": ["/absolute/path/to/opencode-statusline"]
 }
 ```
 
