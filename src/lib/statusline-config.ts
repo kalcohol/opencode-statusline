@@ -18,7 +18,8 @@ export const STATUSLINE_FIELDS = [
   { id: "quota_5h", label: "5h quota", aliases: ["5h", "quota5h", "five_hour"] },
   { id: "quota_weekly", label: "Weekly quota", aliases: ["week", "weekly", "quota_week"] },
   { id: "session_io", label: "Session input/output tokens", aliases: ["io", "tokens_io"] },
-  { id: "session_total", label: "Session total tokens", aliases: ["tokens", "total_tokens"] }
+  { id: "session_total", label: "Session total tokens", aliases: ["tokens", "total_tokens"] },
+  { id: "session_cost", label: "Session cost", aliases: ["cost", "spend", "spent", "money", "price", "usd"] }
 ] as const;
 
 export type StatuslineFieldID = (typeof STATUSLINE_FIELDS)[number]["id"];

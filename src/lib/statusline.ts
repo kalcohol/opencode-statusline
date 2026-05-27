@@ -53,6 +53,19 @@ type TokenTotals = {
   total: number;
 };
 
+type SessionCost = {
+  amount: number;
+  estimated: boolean;
+};
+
+type ModelCostRow = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  tierSize?: number;
+};
+
 type GenerationMetrics = {
   ttftMs?: number;
   tokensPerSecond?: number;
@@ -167,6 +180,12 @@ function sessionTokenTotals(messages: readonly unknown[]): TokenTotals {
   return total;
 }
 
+function messageRecordedCost(message: unknown): number | undefined {
+  if (!isRecord(message) || message.role !== "assistant") return undefined;
+  const cost = toFiniteNumber(message.cost);
+  return cost !== undefined && cost >= 0 ? cost : undefined;
+}
+
 function latestContextTokens(messages: readonly unknown[]): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -176,10 +195,104 @@ function latestContextTokens(messages: readonly unknown[]): number {
 }
 
 function modelContextLimit(provider: ProviderInfoLike | undefined, modelID: string | undefined): number | undefined {
+  const model = modelInfo(provider, modelID);
+  if (!model || !isRecord(model.limit)) return undefined;
+  return toFiniteNumber(model.limit.context);
+}
+
+function modelInfo(provider: ProviderInfoLike | undefined, modelID: string | undefined): Record<string, unknown> | undefined {
   if (!provider || !modelID || !isRecord(provider.models)) return undefined;
   const model = provider.models[modelID];
-  if (!isRecord(model) || !isRecord(model.limit)) return undefined;
-  return toFiniteNumber(model.limit.context);
+  return isRecord(model) ? model : undefined;
+}
+
+function parseModelCostRows(model: Record<string, unknown> | undefined): ModelCostRow[] {
+  if (!model || !Array.isArray(model.cost)) return [];
+  return model.cost
+    .filter(isRecord)
+    .map((row) => {
+      const cache = isRecord(row.cache) ? row.cache : {};
+      const tier = isRecord(row.tier) ? row.tier : undefined;
+      const tierSize = tier?.type === "context" ? toFiniteNumber(tier.size) : undefined;
+      return {
+        input: toFiniteNumber(row.input) ?? 0,
+        output: toFiniteNumber(row.output) ?? 0,
+        cacheRead: toFiniteNumber(cache.read) ?? toFiniteNumber(row.cache_read) ?? 0,
+        cacheWrite: toFiniteNumber(cache.write) ?? toFiniteNumber(row.cache_write) ?? 0,
+        tierSize
+      };
+    });
+}
+
+function selectModelCostRow(rows: readonly ModelCostRow[], tokens: TokenTotals): ModelCostRow | undefined {
+  if (rows.length === 0) return undefined;
+  const contextTokens = tokens.input + tokens.cacheRead + tokens.cacheWrite;
+  const tiered = rows
+    .filter((row) => row.tierSize !== undefined && contextTokens > row.tierSize)
+    .sort((left, right) => (right.tierSize ?? 0) - (left.tierSize ?? 0))[0];
+  return tiered ?? rows.find((row) => row.tierSize === undefined) ?? rows[0];
+}
+
+function estimateMessageCost(input: {
+  providers: ReadonlyArray<ProviderInfoLike>;
+  fallbackMeta: ModelMeta;
+  message: unknown;
+}): number | undefined {
+  if (!isRecord(input.message) || input.message.role !== "assistant") return undefined;
+  const tokens = messageTokens(input.message);
+  if (tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite <= 0) return undefined;
+
+  const messageMeta = modelFromMessage(input.message);
+  const providerID = messageMeta.providerID ?? input.fallbackMeta.providerID;
+  const modelID = messageMeta.modelID ?? input.fallbackMeta.modelID;
+  const provider = input.providers.find((item) => item.id === providerID);
+  const costRow = selectModelCostRow(parseModelCostRows(modelInfo(provider, modelID)), tokens);
+  if (!costRow) return undefined;
+
+  const cachedInput = tokens.cacheRead + tokens.cacheWrite;
+  const inputTokens = Math.max(0, tokens.input - cachedInput);
+  return (
+    inputTokens * costRow.input
+    + tokens.output * costRow.output
+    + tokens.cacheRead * costRow.cacheRead
+    + tokens.cacheWrite * costRow.cacheWrite
+  ) / 1_000_000;
+}
+
+function sessionCost(input: {
+  providers: ReadonlyArray<ProviderInfoLike>;
+  fallbackMeta: ModelMeta;
+  messages: readonly unknown[];
+}): SessionCost | undefined {
+  let amount = 0;
+  let hasCost = false;
+  let estimated = false;
+
+  for (const message of input.messages) {
+    const recorded = messageRecordedCost(message);
+    if (recorded !== undefined) {
+      amount += recorded;
+      hasCost = true;
+      continue;
+    }
+
+    const estimate = estimateMessageCost({ ...input, message });
+    if (estimate !== undefined) {
+      amount += estimate;
+      hasCost = true;
+      estimated = true;
+    }
+  }
+
+  return hasCost ? { amount, estimated } : undefined;
+}
+
+function formatSessionCost(cost: SessionCost | undefined): string | undefined {
+  if (!cost) return undefined;
+  const amount = cost.amount;
+  const precision = amount === 0 || amount >= 0.01 ? 2 : amount >= 0.001 ? 3 : 4;
+  const prefix = cost.estimated ? "eq " : "cost ";
+  return `${prefix}$${amount.toFixed(precision)}`;
 }
 
 function timestampMs(value: unknown): number | undefined {
@@ -354,16 +467,16 @@ async function sessionMessages(api: TuiApiLike, sessionID: string): Promise<read
   return getClientSessionMessages(api, sessionID);
 }
 
-async function sessionTokenTotalsWithChildren(
+async function sessionMessagesWithChildren(
   api: TuiApiLike,
   messages: readonly unknown[],
   children: readonly unknown[]
-): Promise<TokenTotals> {
+): Promise<unknown[]> {
   const allMessages: unknown[] = [...messages];
   for (const childID of childSessionIDs(children)) {
     allMessages.push(...await sessionMessages(api, childID));
   }
-  return sessionTokenTotals(allMessages);
+  return allMessages;
 }
 
 async function subagentText(api: TuiApiLike, sessionID: string, children?: readonly unknown[]): Promise<string | undefined> {
@@ -398,11 +511,13 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
   const contextUsed = latestContextTokens(messages);
   const contextLimit = modelContextLimit(provider, meta.modelID);
   const generationMetrics = latestGenerationMetrics(api, messages);
-  const childFields = fields.some((field) => ["subagent_status", "session_io", "session_total"].includes(field));
+  const childFields = fields.some((field) => ["subagent_status", "session_io", "session_total", "session_cost"].includes(field));
   const children = childFields ? await getChildSessions(api, sessionID) : [];
-  const sessionTokens = childFields
-    ? await sessionTokenTotalsWithChildren(api, messages, children)
-    : sessionTokenTotals(messages);
+  const allMessages = childFields ? await sessionMessagesWithChildren(api, messages, children) : messages;
+  const sessionTokens = sessionTokenTotals(allMessages);
+  const cost = fields.includes("session_cost")
+    ? sessionCost({ providers: api.state.provider, fallbackMeta: meta, messages: allMessages })
+    : undefined;
 
   let quotaReport;
   if (meta.providerID && (fields.includes("quota_5h") || fields.includes("quota_weekly"))) {
@@ -431,6 +546,7 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
       generationMetrics,
       children,
       sessionTokens,
+      sessionCost: cost,
       quotaReport
     });
     if (text) parts.push({ field, text });
@@ -454,6 +570,7 @@ async function renderField(input: {
   generationMetrics?: GenerationMetrics;
   children?: readonly unknown[];
   sessionTokens: TokenTotals;
+  sessionCost?: SessionCost;
   quotaReport?: Awaited<ReturnType<typeof collectProviderUsage>>;
 }): Promise<string | undefined> {
   switch (input.field) {
@@ -491,6 +608,8 @@ async function renderField(input: {
       return `${formatTokenAmount(input.sessionTokens.input)} in / ${formatTokenAmount(input.sessionTokens.output)} out`;
     case "session_total":
       return `${formatTokenAmount(input.sessionTokens.total)} used`;
+    case "session_cost":
+      return formatSessionCost(input.sessionCost);
     default:
       return undefined;
   }

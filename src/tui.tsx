@@ -431,6 +431,8 @@ function statuslineSegmentColor(theme: TuiPluginApi["theme"]["current"], segment
       return theme.secondary;
     case "session_total":
       return theme.secondary;
+    case "session_cost":
+      return theme.success;
     default:
       return theme.textMuted;
   }

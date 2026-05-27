@@ -16,4 +16,8 @@ describe("parseStatuslineFieldArguments", () => {
   it("supports clear", () => {
     expect(parseStatuslineFieldArguments("clear").clear).toBe(true);
   });
+
+  it("supports session cost aliases", () => {
+    expect(parseStatuslineFieldArguments("cost spent usd").fields).toEqual(["session_cost"]);
+  });
 });

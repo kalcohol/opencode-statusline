@@ -139,6 +139,7 @@ Available fields:
 | Weekly quota | provider weekly quota used percent, when available |
 | Session input/output tokens | accumulated session and child-session input/output tokens as `<input> in / <output> out` |
 | Session total tokens | accumulated session and child-session total tokens as `<total> used`; includes reasoning/cache tokens when OpenCode exposes them |
+| Session cost | accumulated session and child-session cost as `cost $0.02`; uses `eq $0.02` when estimated from model pricing |
 
 Unavailable provider/model data is omitted. For example, OpenRouter has balance and usage totals, but no 5h subscription quota window.
 

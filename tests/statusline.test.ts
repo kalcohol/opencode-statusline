@@ -70,15 +70,22 @@ function apiWithGenerationMetrics() {
   };
 }
 
-function assistantMessage(id: string, input: number, output: number) {
+function assistantMessage(
+  id: string,
+  input: number,
+  output: number,
+  extra: { cost?: number; cacheRead?: number; cacheWrite?: number; model?: unknown } = {}
+) {
   return {
     id,
     role: "assistant",
+    cost: extra.cost,
+    model: extra.model,
     tokens: {
       input,
       output,
       reasoning: 0,
-      cache: { read: 0, write: 0 }
+      cache: { read: extra.cacheRead ?? 0, write: extra.cacheWrite ?? 0 }
     }
   };
 }
@@ -212,6 +219,61 @@ describe("buildTuiStatusline", () => {
     };
 
     await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("4K in / 6K out | 10K used");
+  });
+
+  it("renders recorded session cost including child sessions", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_cost"] }));
+    const messagesBySession: Record<string, unknown[]> = {
+      ses_1: [assistantMessage("msg_parent", 1024, 2048, { cost: 0.0123 })],
+      ses_child: [assistantMessage("msg_child", 3072, 4096, { cost: 0.0077 })]
+    };
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: (sessionID: string) => messagesBySession[sessionID] ?? [],
+          status: () => ({ type: "idle" })
+        }
+      },
+      client: {
+        session: {
+          children: async () => [{ id: "ses_child" }]
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("cost $0.02");
+  });
+
+  it("estimates session cost from model pricing when recorded cost is missing", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_cost"] }));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{
+          id: "openrouter",
+          name: "OpenRouter",
+          models: {
+            "model-a": {
+              cost: [{ input: 10, output: 20, cache: { read: 1, write: 5 } }]
+            }
+          }
+        }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [assistantMessage("msg_parent", 2_000, 1_000, { cacheRead: 1_000 })],
+          status: () => ({ type: "idle" })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("eq $0.03");
   });
 
   it("omits subagent status when all child sessions are idle", async () => {
