@@ -183,10 +183,17 @@ function messageTokens(message: unknown): TokenTotals {
   const output = toFiniteNumber(tokens.output) ?? 0;
   const reasoning = toFiniteNumber(tokens.reasoning) ?? 0;
   const cache = isRecord(tokens.cache) ? tokens.cache : {};
-  const cacheRead = toFiniteNumber(cache.read) ?? 0;
-  const cacheWrite = toFiniteNumber(cache.write) ?? 0;
+  const cacheRead = toFiniteNumber(cache.read)
+    ?? toFiniteNumber(tokens.cache_read)
+    ?? toFiniteNumber(tokens.cacheRead)
+    ?? 0;
+  const cacheWrite = toFiniteNumber(cache.write)
+    ?? toFiniteNumber(tokens.cache_write)
+    ?? toFiniteNumber(tokens.cacheWrite)
+    ?? 0;
   const explicitTotal = toFiniteNumber(tokens.total);
-  const total = explicitTotal ?? input + output + reasoning + cacheRead + cacheWrite;
+  const computedTotal = input + output + reasoning + cacheRead + cacheWrite;
+  const total = explicitTotal && explicitTotal > 0 ? explicitTotal : computedTotal;
   return { input, output, reasoning, cacheRead, cacheWrite, total };
 }
 
@@ -214,7 +221,9 @@ function messageRecordedCost(message: unknown): number | undefined {
 function latestContextTokens(messages: readonly unknown[]): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (isRecord(message) && message.role === "assistant") return messageTokens(message).total;
+    if (!isRecord(message) || message.role !== "assistant") continue;
+    const total = messageTokens(message).total;
+    if (total > 0) return total;
   }
   return 0;
 }
@@ -546,8 +555,10 @@ async function getClientSessionMessages(api: TuiApiLike, sessionID: string): Pro
 
 async function sessionMessages(api: TuiApiLike, sessionID: string): Promise<readonly unknown[]> {
   const local = api.state.session.messages(sessionID);
-  if (local.length > 0) return local;
-  return getClientSessionMessages(api, sessionID);
+  if (sessionTokenTotals(local).total > 0) return local;
+  const remote = await getClientSessionMessages(api, sessionID);
+  if (sessionTokenTotals(remote).total > 0) return remote;
+  return local.length > 0 ? local : remote;
 }
 
 async function sessionMessagesWithChildren(
@@ -610,7 +621,7 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
   const fields = loadStatuslineConfig().fields;
   if (fields.length === 0) return [];
 
-  const messages = api.state.session.messages(sessionID);
+  const messages = await sessionMessages(api, sessionID);
   const meta = await resolveTuiModel(api, sessionID);
   const provider = api.state.provider.find((item) => item.id === meta.providerID);
   const contextUsed = latestContextTokens(messages);

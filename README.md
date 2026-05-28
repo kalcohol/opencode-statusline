@@ -131,7 +131,7 @@ OpenCode 会从当前项目目录向上查找 `tui.json(c)` 和 `opencode.json(c
 | Repository | worktree 或目录 basename |
 | Branch | 当前 git 分支名 |
 | Git diff stats | tracked 文件的 staged+unstaged 增删行数，格式为 `+123,-45` |
-| Context used | 最新 assistant 消息的上下文 token 估算 |
+| Context used | 最新带有效 token 的 assistant 消息上下文估算 |
 | Context remaining | 模型上下文上限减去当前上下文估算 |
 | Context length | 当前模型上下文上限 |
 | Context used/total | 紧凑的已用/总上下文显示 |

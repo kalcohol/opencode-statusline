@@ -131,7 +131,7 @@ reset 時刻はローカル時刻で、固定幅の `YYYY-MM-DD HH:mm:ss` 形式
 | Repository | worktree または directory の basename |
 | Branch | 現在の git branch 名 |
 | Git diff stats | tracked file の staged+unstaged git diff 行数。`+123,-45` 形式 |
-| Context used | 最新 assistant message の context token 推定値 |
+| Context used | 最新の token 付き assistant message の context 推定値 |
 | Context remaining | model context limit から現在の context 推定値を引いた値 |
 | Context length | 現在の model context limit |
 | Context used/total | 使用済み/総 context window のコンパクト表示 |

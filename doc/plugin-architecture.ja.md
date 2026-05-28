@@ -94,7 +94,7 @@ Statusline fields は `src/lib/statusline.ts` で構築されます。
 | `repo` | repository/worktree basename |
 | `branch` | current git branch。`git` prefix は付けません |
 | `git_diff_stats` | tracked staged+unstaged git diff line counts as `+123,-45` |
-| `context_used` | latest assistant message token total |
+| `context_used` | latest token-bearing assistant message token total |
 | `context_remaining` | model context limit から current context estimate を引いた値 |
 | `context_length` | current model context limit |
 | `context_window` | used/total context window |

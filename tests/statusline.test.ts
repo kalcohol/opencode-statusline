@@ -123,6 +123,79 @@ describe("buildTuiStatusline", () => {
     await expect(buildTuiStatusline(apiWithContextLimit(undefined) as any, "ses_1")).resolves.toBe("");
   });
 
+  it("falls back to client messages when local TUI messages do not include token data", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["context_used"] }));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [{ id: "msg_local", role: "assistant" }],
+          status: () => ({ type: "idle" })
+        }
+      },
+      client: {
+        session: {
+          messages: async () => ({ data: [assistantMessage("msg_remote", 4096, 1024)] })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("ctx 5K");
+  });
+
+  it("keeps the latest nonzero context while a new assistant message has no tokens yet", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["context_used"] }));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [
+            assistantMessage("msg_done", 2048, 1024),
+            assistantMessage("msg_streaming", 0, 0)
+          ],
+          status: () => ({ type: "busy" })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("ctx 3K");
+  });
+
+  it("does not let an explicit zero token total hide input and output tokens", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_total"] }));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [{
+            ...assistantMessage("msg_zero_total", 1024, 1024),
+            tokens: {
+              input: 1024,
+              output: 1024,
+              total: 0,
+              cache: { read: 0, write: 0 }
+            }
+          }],
+          status: () => ({ type: "idle" })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("2K used");
+  });
+
   it("renders TTFT and generation speed from message and part timing", async () => {
     fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["generation_metrics"] }));
 

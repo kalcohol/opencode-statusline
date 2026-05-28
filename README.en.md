@@ -131,7 +131,7 @@ Available fields:
 | Repository | worktree or directory basename |
 | Branch | current git branch name |
 | Git diff stats | tracked staged+unstaged git diff line counts as `+123,-45` |
-| Context used | latest assistant context token estimate |
+| Context used | latest token-bearing assistant context estimate |
 | Context remaining | model context limit minus current context estimate |
 | Context length | current model context limit |
 | Context used/total | compact used/limit display |

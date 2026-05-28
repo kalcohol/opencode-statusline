@@ -94,7 +94,7 @@ Supported fields:
 | `repo` | repository/worktree basename |
 | `branch` | current git branch, without a `git` prefix |
 | `git_diff_stats` | tracked staged+unstaged git diff line counts as `+123,-45` |
-| `context_used` | latest assistant message token total |
+| `context_used` | latest token-bearing assistant message token total |
 | `context_remaining` | model context limit minus current context estimate |
 | `context_length` | current model context limit |
 | `context_window` | used/total context window |
