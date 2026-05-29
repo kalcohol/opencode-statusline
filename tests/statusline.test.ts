@@ -195,6 +195,32 @@ describe("buildTuiStatusline", () => {
     expect(clientMessages).not.toHaveBeenCalled();
   });
 
+  it("does not fetch child sessions for token totals while the session is busy", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_io", "session_total"] }));
+    const children = vi.fn(async () => [{ id: "ses_child" }]);
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [assistantMessage("msg_parent", 1024, 2048)],
+          status: () => ({ type: "busy" })
+        }
+      },
+      client: {
+        session: {
+          children
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("1K in / 2K out | 3K used");
+    expect(children).not.toHaveBeenCalled();
+  });
+
   it("does not let an explicit zero token total hide input and output tokens", async () => {
     fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_total"] }));
     const api = {

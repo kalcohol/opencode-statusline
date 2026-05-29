@@ -442,6 +442,22 @@ function statuslineSegmentColor(theme: TuiPluginApi["theme"]["current"], segment
   }
 }
 
+function eventSessionID(event: unknown): string | undefined {
+  if (!isRecord(event)) return undefined;
+  const properties = isRecord(event.properties) ? event.properties : undefined;
+  if (!properties) return undefined;
+  const info = isRecord(properties.info) ? properties.info : undefined;
+  const part = isRecord(properties.part) ? properties.part : undefined;
+  return toNonEmptyString(properties.sessionID)
+    ?? toNonEmptyString(info?.id)
+    ?? toNonEmptyString(info?.sessionID)
+    ?? toNonEmptyString(part?.sessionID);
+}
+
+function eventMatchesSession(event: unknown, sessionID: string): boolean {
+  return eventSessionID(event) === sessionID;
+}
+
 function StatuslineView(props: {
   api: TuiPluginApi;
   sessionID: string;
@@ -526,25 +542,31 @@ function StatuslineView(props: {
   const unsubscribers = [
     onConfigChanged(queueReload),
     props.api.event.on("session.updated", (event) => {
-      if ((event as any).properties?.info?.id === props.sessionID) {
+      if (eventMatchesSession(event, props.sessionID)) {
         invalidateGitDiffStatsCache();
         queueReload();
       }
     }),
+    props.api.event.on("session.status", (event) => {
+      if (eventMatchesSession(event, props.sessionID)) queueReload();
+    }),
+    props.api.event.on("session.idle", (event) => {
+      if (eventMatchesSession(event, props.sessionID)) queueReload();
+    }),
     props.api.event.on("message.updated", (event) => {
-      if ((event as any).properties?.info?.sessionID === props.sessionID) queueReload();
+      if (eventMatchesSession(event, props.sessionID)) queueReload();
     }),
     props.api.event.on("message.part.updated", (event) => {
-      if ((event as any).properties?.part?.sessionID === props.sessionID) queueReload();
+      if (eventMatchesSession(event, props.sessionID)) queueReload();
     }),
     props.api.event.on("message.part.delta", (event) => {
-      if ((event as any).properties?.sessionID === props.sessionID) queueReload();
+      if (eventMatchesSession(event, props.sessionID)) queueReload();
     }),
     props.api.event.on("message.removed", (event) => {
-      if ((event as any).properties?.sessionID === props.sessionID) queueReload();
+      if (eventMatchesSession(event, props.sessionID)) queueReload();
     }),
     props.api.event.on("tui.session.select", (event) => {
-      if ((event as any).properties?.sessionID === props.sessionID) queueReload();
+      if (eventMatchesSession(event, props.sessionID)) queueReload();
     }),
     props.api.event.on("tui.command.execute", (event) => {
       if ((event as any).properties?.command !== "session.sidebar.toggle") return;

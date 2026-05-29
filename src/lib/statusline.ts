@@ -627,12 +627,14 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
   const messages = await sessionMessages(api, sessionID);
   const meta = await resolveTuiModel(api, sessionID);
   const provider = api.state.provider.find((item) => item.id === meta.providerID);
+  const sessionStatus = sessionStatusLabel(api.state.session.status(sessionID));
+  const sessionInactive = isInactiveSubagentStatus(sessionStatus);
   const contextUsed = latestContextTokens(messages);
   const contextLimit = modelContextLimit(provider, meta.modelID);
   const generationMetrics = latestGenerationMetrics(api, messages);
-  const diffStats = fields.includes("git_diff_stats") ? await gitDiffStats(api) : undefined;
+  const diffStats = fields.includes("git_diff_stats") && sessionInactive ? await gitDiffStats(api) : undefined;
   const childFields = fields.some((field) => ["subagent_status", "session_io", "session_total", "session_cost"].includes(field));
-  const children = childFields ? await getChildSessions(api, sessionID) : [];
+  const children = childFields && sessionInactive ? await getChildSessions(api, sessionID) : [];
   const allMessages = childFields ? await sessionMessagesWithChildren(api, messages, children) : messages;
   const sessionTokens = sessionTokenTotals(allMessages);
   const cost = fields.includes("session_cost")
@@ -641,7 +643,7 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
 
   let quotaReport;
   const providerUsageFields = fields.some((field) => ["quota_5h", "quota_weekly", "provider_balance"].includes(field));
-  if (meta.providerID && providerUsageFields) {
+  if (meta.providerID && providerUsageFields && sessionInactive) {
     quotaReport = await withTimeout(
       collectProviderUsage({
         providerID: meta.providerID,
