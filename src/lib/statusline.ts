@@ -19,6 +19,7 @@ import {
 import { loadStatuslineConfig, type StatuslineFieldID } from "./statusline-config.js";
 
 const STATUSLINE_QUOTA_TIMEOUT_MS = 1_000;
+const SESSION_MESSAGES_FALLBACK_TIMEOUT_MS = 300;
 const GIT_DIFF_TIMEOUT_MS = 750;
 const GIT_DIFF_CACHE_TTL_MS = 1_500;
 const execFileAsync = promisify(execFile);
@@ -556,7 +557,9 @@ async function getClientSessionMessages(api: TuiApiLike, sessionID: string): Pro
 async function sessionMessages(api: TuiApiLike, sessionID: string): Promise<readonly unknown[]> {
   const local = api.state.session.messages(sessionID);
   if (sessionTokenTotals(local).total > 0) return local;
-  const remote = await getClientSessionMessages(api, sessionID);
+  const status = sessionStatusLabel(api.state.session.status(sessionID));
+  if (!isInactiveSubagentStatus(status)) return local;
+  const remote = await withTimeout(getClientSessionMessages(api, sessionID), SESSION_MESSAGES_FALLBACK_TIMEOUT_MS) ?? [];
   if (sessionTokenTotals(remote).total > 0) return remote;
   return local.length > 0 ? local : remote;
 }

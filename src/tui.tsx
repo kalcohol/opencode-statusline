@@ -464,6 +464,9 @@ function StatuslineView(props: {
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let disposed = false;
   let version = 0;
+  let inFlight = false;
+  let pendingReload = false;
+  let queuedReloadTimer: ReturnType<typeof setTimeout> | undefined;
   let lastRecentModelKey = "";
 
   const recentModelKey = () => {
@@ -473,6 +476,12 @@ function StatuslineView(props: {
 
   const reload = () => {
     if (disposed) return;
+    if (inFlight) {
+      pendingReload = true;
+      return;
+    }
+    inFlight = true;
+    pendingReload = false;
     lastRecentModelKey = recentModelKey();
     const currentVersion = ++version;
     void buildTuiStatuslineParts(props.api, props.sessionID)
@@ -483,14 +492,23 @@ function StatuslineView(props: {
       .catch(() => {
         if (disposed || currentVersion !== version) return;
         setParts([{ text: "statusline error" }]);
+      })
+      .finally(() => {
+        inFlight = false;
+        if (disposed || !pendingReload) return;
+        pendingReload = false;
+        queueReload();
       });
   };
 
   const queueReload = () => {
+    if (queuedReloadTimer) return;
     const timer = setTimeout(() => {
+      queuedReloadTimer = undefined;
       timers.delete(timer);
       reload();
     }, EVENT_REFRESH_DELAY_MS);
+    queuedReloadTimer = timer;
     timers.add(timer);
   };
 

@@ -169,6 +169,32 @@ describe("buildTuiStatusline", () => {
     await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("ctx 3K");
   });
 
+  it("does not fetch client messages for context fallback while the session is busy", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["context_used"] }));
+    const clientMessages = vi.fn(async () => ({ data: [assistantMessage("msg_remote", 4096, 1024)] }));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [{ id: "msg_local", role: "assistant" }],
+          status: () => ({ type: "busy" })
+        }
+      },
+      client: {
+        session: {
+          messages: clientMessages
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("ctx 0");
+    expect(clientMessages).not.toHaveBeenCalled();
+  });
+
   it("does not let an explicit zero token total hide input and output tokens", async () => {
     fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_total"] }));
     const api = {
