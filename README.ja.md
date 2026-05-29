@@ -137,7 +137,7 @@ reset 時刻はローカル時刻で、固定幅の `YYYY-MM-DD HH:mm:ss` 形式
 | Context used/total | 使用済み/総 context window のコンパクト表示 |
 | TTFT/speed | 初回出力までの近似時間と output token 生成速度。新しい応答が未完了の間は直近の完全な値を保持します |
 | Subagent status | active subagent または child-session の状態。idle/completed の child は省略します |
-| Main agent status | 現在の main session 状態。`agent` prefix は付けません |
+| Main agent status | 現在の main session 状態。`agent` prefix は付けません。一時的な `queued`/`pending` は省略します |
 | 5h quota | provider の 5h quota 使用率。利用可能な場合のみ表示 |
 | Weekly quota | provider の weekly quota 使用率。利用可能な場合のみ表示 |
 | Provider balance | provider が返す prepaid balance または remaining limit。`bal $12.34` 形式 |
@@ -153,7 +153,7 @@ reset 時刻はローカル時刻で、固定幅の `YYYY-MM-DD HH:mm:ss` 形式
 
 subscription や coding plan provider では、`Session cost` は実際の課金額ではなく token 単価による等価推定になることがあります。OpenCode が message に記録した cost を優先し、ない場合だけ model catalog pricing へ fallback します。
 
-Statusline は OpenCode の既存 prompt 右側コンテンツを保持します。既存の右側コンテンツ幅を測定し、このプラグインのフィールドを動的に truncate して、prompt が次の行へ折り返さないようにします。
+Linux/macOS では statusline は `session_prompt` を wrap し、既存の `session_prompt_right` content を保持して右側の幅を測定します。Windows では OpenCode の native prompt status rendering へ干渉しないよう、`session_prompt_right` だけを登録します。どちらの経路でもこの plugin の fields を動的に truncate し、prompt が次の行へ折り返さないようにします。
 
 ## 対応 Providers
 

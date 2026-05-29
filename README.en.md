@@ -137,7 +137,7 @@ Available fields:
 | Context used/total | compact used/limit display |
 | TTFT/speed | approximate time to first output and output token generation speed; keeps the last complete value while a new response is still incomplete |
 | Subagent status | active subagent or child-session status; idle/completed children are omitted |
-| Main agent status | current main session status, without an `agent` prefix |
+| Main agent status | current main session status, without an `agent` prefix; transient `queued`/`pending` is omitted |
 | 5h quota | provider 5h quota used percent, when available |
 | Weekly quota | provider weekly quota used percent, when available |
 | Provider balance | prepaid balance or remaining limit reported by the provider as `bal $12.34` |
@@ -153,7 +153,7 @@ Unavailable provider/model data is omitted. For example, OpenRouter has balance 
 
 For subscription or coding-plan providers, `Session cost` may be an equivalent per-token estimate rather than an actual amount charged. It prefers OpenCode's recorded message cost when present, then falls back to model catalog pricing.
 
-The statusline preserves OpenCode's existing right-side prompt content. It measures that content and dynamically truncates this plugin's fields to avoid wrapping onto the next line.
+On Linux/macOS, the statusline wraps `session_prompt` and preserves the existing `session_prompt_right` content so it can measure the right-side width. On Windows, it only registers `session_prompt_right` to avoid interfering with OpenCode's native prompt status rendering. Both paths dynamically truncate this plugin's fields to avoid wrapping onto the next line.
 
 ## Supported Providers
 

@@ -37,7 +37,8 @@ tests/
 
 | Area | Implementation |
 | --- | --- |
-| `session_prompt` slot | Replaces the host prompt with `api.ui.Prompt`, preserving host props and injecting a custom `right` node |
+| `session_prompt` slot on Linux/macOS | Wraps `api.ui.Prompt`, preserves host props, and injects statusline fields into the prompt `right` node |
+| `session_prompt_right` slot on Windows | Adds statusline fields to OpenCode's native prompt right area without replacing `api.ui.Prompt` |
 | `/usage` command | `api.keymap.registerLayer`, `slashName: "usage"` |
 | `/statusline` command | `api.keymap.registerLayer`, `slashName: "statusline"` |
 | usage close binding | Dialog-layer `return` binding while the usage dialog is open |
@@ -100,7 +101,7 @@ Supported fields:
 | `context_window` | used/total context window |
 | `generation_metrics` | approximate TTFT and output token generation speed |
 | `subagent_status` | active parent/child subagent state |
-| `agent_status` | main session status without an `agent` prefix |
+| `agent_status` | main session status without an `agent` prefix; transient `queued`/`pending` is omitted |
 | `quota_5h` | provider 5h quota used percent |
 | `quota_weekly` | provider weekly quota used percent |
 | `provider_balance` | provider balance or remaining limit as `bal $12.34` |
@@ -136,19 +137,22 @@ TUI rendering uses colored segments:
 
 ## Prompt Width Strategy
 
-The statusline is injected into the prompt model row through the prompt `right` prop. The plugin must coexist with:
+Prompt integration is platform-specific. On Linux/macOS, the plugin wraps `session_prompt` and keeps the original `session_prompt_right` slot inside the prompt `right` node. On Windows, it only registers `session_prompt_right` so native prompt status rendering stays owned by OpenCode.
+
+The plugin must coexist with:
 
 - OpenCode's left-side agent/model/provider labels
-- Existing `session_prompt_right` slot content from OpenCode or other plugins
+- OpenCode's existing right-side prompt content
+- other `session_prompt_right` slot content
 - terminal width changes
 - optional OpenCode sidebar width
 
-`PromptRightContent` keeps the original `session_prompt_right` slot and measures its actual rendered width via `onSizeChange`. `StatuslineView` computes its budget as:
+`PromptRightContent` measures the original right slot width via `onSizeChange` on Linux/macOS. `StatuslineRightSlot` uses a conservative reserve on Windows, because the slot-only API does not expose the native right-side width. `StatuslineView` computes its budget as:
 
 ```text
 estimated prompt inner width
 - estimated native left model row width
-- measured original right slot width
+- measured or reserved native right-side prompt width
 - row gaps and safety columns
 ```
 

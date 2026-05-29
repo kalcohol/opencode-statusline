@@ -511,6 +511,11 @@ function isInactiveSubagentStatus(status: string | undefined): boolean {
   return !status || ["idle", "done", "complete", "completed"].includes(status);
 }
 
+function agentStatusText(status: string | undefined): string | undefined {
+  if (!status || ["queued", "pending"].includes(status)) return undefined;
+  return status;
+}
+
 async function getChildSessions(api: TuiApiLike, sessionID: string): Promise<unknown[]> {
   const attempts: unknown[][] = [
     [{ sessionID }],
@@ -725,7 +730,7 @@ async function renderField(input: {
       return subagentText(input.api, input.sessionID, input.children);
     case "agent_status": {
       const status = sessionStatusLabel(input.api.state.session.status(input.sessionID));
-      return status;
+      return agentStatusText(status);
     }
     case "quota_5h":
       return quotaText(findUsageWindow(input.quotaReport, "fiveHour"), "5h");

@@ -460,6 +460,25 @@ describe("buildTuiStatusline", () => {
     await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("master | idle | 4K in / 6K out | 10K used");
   });
 
+  it("omits transient queued main agent status", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["agent_status"] }));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [],
+          status: () => ({ type: "queued" })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("");
+  });
+
   it("aggregates child-session tokens from the client when local state has not loaded them", async () => {
     fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_io", "session_total"] }));
     const api = {

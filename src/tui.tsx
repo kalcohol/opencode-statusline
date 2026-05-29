@@ -2,7 +2,7 @@
 import { TextAttributes, type BoxRenderable } from "@opentui/core";
 import type { JSX } from "@opentui/solid";
 import { useTerminalDimensions } from "@opentui/solid";
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui";
+import type { TuiPlugin, TuiPluginApi, TuiPluginModule, TuiPromptRef } from "@opencode-ai/plugin/tui";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { buildTuiStatuslineParts, invalidateGitDiffStatsCache } from "./lib/statusline.js";
 import { buildTuiUsageText } from "./lib/tui-usage.js";
@@ -29,6 +29,7 @@ const PROMPT_LEFT_BORDER_WIDTH = 1;
 const PROMPT_ROW_GAP = 1;
 const RIGHT_CONTENT_GAP = 1;
 const STATUSLINE_SAFETY_COLUMNS = 2;
+const HOST_PROMPT_RIGHT_RESERVE_COLUMNS = 36;
 const MIN_STATUSLINE_COLUMNS = 8;
 const STATUSLINE_SEPARATOR = " | ";
 const configListeners = new Set<() => void>();
@@ -604,6 +605,16 @@ function StatuslineView(props: {
   );
 }
 
+function StatuslineRightSlot(props: { api: TuiPluginApi; sessionID: string }): JSX.Element {
+  return (
+    <StatuslineView
+      api={props.api}
+      sessionID={props.sessionID}
+      rightSlotColumns={HOST_PROMPT_RIGHT_RESERVE_COLUMNS}
+    />
+  );
+}
+
 function PromptRightContent(props: { api: TuiPluginApi; sessionID: string }): JSX.Element {
   const [rightSlotColumns, setRightSlotColumns] = createSignal(0);
 
@@ -633,26 +644,32 @@ function PromptRightContent(props: { api: TuiPluginApi; sessionID: string }): JS
 const tui: TuiPlugin = async (api) => {
   api.slots.register({
     order: STATUSLINE_SLOT_ORDER,
-    slots: {
-      session_prompt(_ctx, props: {
-        session_id: string;
-        visible?: boolean;
-        disabled?: boolean;
-        on_submit?: () => void;
-        ref?: (ref: unknown) => void;
-      }) {
-        return (
-          <api.ui.Prompt
-            sessionID={props.session_id}
-            visible={props.visible}
-            disabled={props.disabled}
-            onSubmit={props.on_submit}
-            ref={props.ref as any}
-            right={<PromptRightContent api={api} sessionID={props.session_id} />}
-          />
-        );
-      }
-    }
+    slots: process.platform === "win32"
+      ? {
+          session_prompt_right(_ctx, props: { session_id: string }) {
+            return <StatuslineRightSlot api={api} sessionID={props.session_id} />;
+          }
+        }
+      : {
+          session_prompt(_ctx, props: {
+            session_id: string;
+            visible?: boolean;
+            disabled?: boolean;
+            on_submit?: () => void;
+            ref?: (ref: TuiPromptRef | undefined) => void;
+          }) {
+            return (
+              <api.ui.Prompt
+                sessionID={props.session_id}
+                visible={props.visible}
+                disabled={props.disabled}
+                onSubmit={props.on_submit}
+                ref={props.ref as any}
+                right={<PromptRightContent api={api} sessionID={props.session_id} />}
+              />
+            );
+          }
+        }
   });
 
   api.keymap.registerLayer({

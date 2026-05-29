@@ -37,7 +37,8 @@ tests/
 
 | Area | Implementation |
 | --- | --- |
-| `session_prompt` slot | host prompt を `api.ui.Prompt` で置き換え、host props を保持したまま custom `right` node を注入 |
+| Linux/macOS の `session_prompt` slot | `api.ui.Prompt` を wrap し、host props を保持しながら prompt の `right` node に statusline fields を注入 |
+| Windows の `session_prompt_right` slot | `api.ui.Prompt` を置き換えず、OpenCode native prompt の右側に statusline fields を追加 |
 | `/usage` command | `api.keymap.registerLayer`, `slashName: "usage"` |
 | `/statusline` command | `api.keymap.registerLayer`, `slashName: "statusline"` |
 | usage close binding | usage dialog が開いている間の dialog-layer `return` binding |
@@ -100,7 +101,7 @@ Statusline fields は `src/lib/statusline.ts` で構築されます。
 | `context_window` | used/total context window |
 | `generation_metrics` | approximate TTFT and output token generation speed |
 | `subagent_status` | active parent/child subagent state |
-| `agent_status` | main session status。`agent` prefix は付けません |
+| `agent_status` | main session status。`agent` prefix は付けません。一時的な `queued`/`pending` は省略します |
 | `quota_5h` | provider 5h quota used percent |
 | `quota_weekly` | provider weekly quota used percent |
 | `provider_balance` | provider balance または remaining limit as `bal $12.34` |
@@ -136,19 +137,22 @@ TUI rendering は colored segments を使います：
 
 ## Prompt Width Strategy
 
-statusline は prompt の `right` prop を通して prompt model row に注入されます。plugin は次と共存する必要があります。
+Prompt integration は platform-specific です。Linux/macOS では plugin が `session_prompt` を wrap し、元の `session_prompt_right` slot を prompt の `right` node 内に保持します。Windows では native prompt status rendering を OpenCode 側に残すため、`session_prompt_right` だけを登録します。
+
+plugin は次と共存する必要があります。
 
 - OpenCode の left-side agent/model/provider labels
-- OpenCode や他 plugin の既存 `session_prompt_right` slot content
+- OpenCode の既存 prompt 右側コンテンツ
+- 他 plugin の `session_prompt_right` slot content
 - terminal width changes
 - optional OpenCode sidebar width
 
-`PromptRightContent` は元の `session_prompt_right` slot を保持し、`onSizeChange` で実際の rendered width を測ります。`StatuslineView` は次の budget を計算します。
+Linux/macOS では `PromptRightContent` が `onSizeChange` で元の right slot width を測定します。Windows では slot-only API が native right-side width を公開しないため、`StatuslineRightSlot` は保守的な予約幅を使います。`StatuslineView` は次の budget を計算します。
 
 ```text
 estimated prompt inner width
 - estimated native left model row width
-- measured original right slot width
+- measured or reserved native right-side prompt width
 - row gaps and safety columns
 ```
 

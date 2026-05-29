@@ -137,7 +137,7 @@ OpenCode 会从当前项目目录向上查找 `tui.json(c)` 和 `opencode.json(c
 | Context used/total | 紧凑的已用/总上下文显示 |
 | TTFT/speed | 近似首 token 延迟和输出 token 生成速度；新回复未完成时保留上一条完整指标 |
 | Subagent status | 活跃 subagent 或 child-session 状态；idle/completed 的 child 会被省略 |
-| Main agent status | 当前主 session 状态，不带 `agent` 前缀 |
+| Main agent status | 当前主 session 状态，不带 `agent` 前缀；瞬时 `queued`/`pending` 会省略 |
 | 5h quota | provider 5h quota 使用百分比，有数据时显示 |
 | Weekly quota | provider weekly quota 使用百分比，有数据时显示 |
 | Provider balance | provider 返回的预付费余额或 remaining limit，格式为 `bal $12.34` |
@@ -153,7 +153,7 @@ OpenCode 会从当前项目目录向上查找 `tui.json(c)` 和 `opencode.json(c
 
 对于订阅制或 coding plan provider，`Session cost` 可能只是按 token 单价折算的等价估算，不一定代表真实扣费。它优先使用 OpenCode 记录在 message 上的 cost；没有记录时才回退到模型 catalog pricing。
 
-Statusline 会保留 OpenCode 原有的 prompt 右侧内容。插件会测量已有右侧内容并动态截断本插件字段，避免换行挤坏 prompt 布局。
+Statusline 在 Linux/macOS 上包装 `session_prompt` 并保留原有 `session_prompt_right` 内容，以便测量右侧宽度；Windows 上只注册 `session_prompt_right`，避免替换 native Prompt 干扰 OpenCode 状态渲染。两种路径都会动态截断本插件字段，避免换行挤坏 prompt 布局。
 
 ## 支持的 Providers
 
