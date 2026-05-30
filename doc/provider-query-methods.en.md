@@ -421,4 +421,4 @@ All collectors normalize provider-specific data into:
 
 Absolute reset timestamps are rendered by `/usage` in local time with fixed-width `YYYY-MM-DD HH:mm:ss` fields. Relative reset durations still use compact duration text.
 
-Quota collection is cached for 60 seconds per provider/model kind. `/usage` forces a fresh read; statusline quota/balance fields use the cache and have a 1 second statusline-side timeout.
+Quota collection is cached for 60 seconds per provider/model kind, with stale results kept for 10 minutes for statusline fallback. `/usage` forces a fresh read and updates the cache; statusline quota/balance fields use cached rows first, share concurrent in-flight refreshes, and have a 2.5 second statusline-side timeout.

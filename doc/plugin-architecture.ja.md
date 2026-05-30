@@ -190,7 +190,7 @@ Statusline は次で refresh されます。
 | recent model state file signature change | local model switch detection 後に reload |
 | 60 second interval | full fallback refresh |
 
-Provider quota collection は `providers.ts` で 60 秒 cache されます。statusline quota rendering には 1 秒 timeout もあり、遅い provider が prompt rendering を止めないようにします。`/usage` は意図的に `force: true` で fresh data を取得します。
+Provider quota collection は `providers.ts` で 60 秒の fresh cache と 10 分の stale cache を持ちます。statusline quota rendering はまず cached data を使い、その後 2.5 秒の statusline-side timeout 付きで refresh するため、遅い provider が prompt rendering を止めません。並行する statusline refresh は同じ in-flight provider request を共有します。`/usage` は意図的に `force: true` で fresh data を取得し、cache を更新します。
 
 ## Context Hygiene
 

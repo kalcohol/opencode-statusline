@@ -149,6 +149,8 @@ OpenCode 会从当前项目目录向上查找 `tui.json(c)` 和 `opencode.json(c
 
 `Provider balance` 复用 `/usage` dialog 的余额数据，优先显示 remaining/limit remaining，其次显示 balance/credits。DeepSeek、OpenRouter、OpenAI/Codex credits 等 provider 有余额数据时会显示；纯订阅 quota 没有钱数时会省略。
 
+Quota/balance 字段会复用 provider usage 缓存；`/usage` 手动刷新后，statusline 即使遇到短暂 `queued`/`pending` 或正在 busy，也会优先显示已有缓存，而不是把字段清空。
+
 `Git diff stats` 只读取本地 git 工作树，使用 `git diff --numstat` 和 `git diff --cached --numstat` 汇总 tracked 文件相对 HEAD 的变化；未跟踪文件和二进制文件不会计入。该字段随 statusline 刷新重算，并在 session 更新时清除短缓存，避免流式输出期间频繁执行 git。
 
 对于订阅制或 coding plan provider，`Session cost` 可能只是按 token 单价折算的等价估算，不一定代表真实扣费。它优先使用 OpenCode 记录在 message 上的 cost；没有记录时才回退到模型 catalog pricing。

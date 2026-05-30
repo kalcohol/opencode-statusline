@@ -5,10 +5,12 @@ import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildTuiStatusline, providerBalanceText } from "../src/lib/statusline.js";
 import { buildTuiUsageText } from "../src/lib/tui-usage.js";
+import { clearProviderUsageCache } from "../src/lib/providers.js";
 
 const previousConfigPath = process.env.OPENCODE_STATUSLINE_CONFIG;
 const previousStateDir = process.env.OPENCODE_STATUSLINE_STATE_DIR;
 const previousXiaomiCookie = process.env.XIAOMI_MIMO_SESSION_COOKIE;
+const previousZhipuApiKey = process.env.ZHIPU_API_KEY;
 let tempDir = "";
 
 function apiWithContextLimit(context: number | undefined) {
@@ -98,16 +100,20 @@ describe("buildTuiStatusline", () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-statusline-"));
     process.env.OPENCODE_STATUSLINE_CONFIG = path.join(tempDir, "statusline-plugin.json");
     process.env.OPENCODE_STATUSLINE_STATE_DIR = tempDir;
+    clearProviderUsageCache();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    clearProviderUsageCache();
     if (previousConfigPath === undefined) delete process.env.OPENCODE_STATUSLINE_CONFIG;
     else process.env.OPENCODE_STATUSLINE_CONFIG = previousConfigPath;
     if (previousStateDir === undefined) delete process.env.OPENCODE_STATUSLINE_STATE_DIR;
     else process.env.OPENCODE_STATUSLINE_STATE_DIR = previousStateDir;
     if (previousXiaomiCookie === undefined) delete process.env.XIAOMI_MIMO_SESSION_COOKIE;
     else process.env.XIAOMI_MIMO_SESSION_COOKIE = previousXiaomiCookie;
+    if (previousZhipuApiKey === undefined) delete process.env.ZHIPU_API_KEY;
+    else process.env.ZHIPU_API_KEY = previousZhipuApiKey;
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -303,6 +309,72 @@ describe("buildTuiStatusline", () => {
     };
 
     await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("bal $42.50");
+  });
+
+  it("renders GLM subscription quotas while the main status is transient queued", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["quota_5h", "quota_weekly"] }));
+    process.env.ZHIPU_API_KEY = "test-token";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          limits: [
+            { type: "TOKENS_LIMIT", unit: 3, percentage: 25 },
+            { type: "TOKENS_LIMIT", unit: 6, percentage: 1 }
+          ]
+        }
+      }),
+      text: async () => ""
+    } as Response);
+    const api = {
+      state: {
+        config: { model: "zhipu/glm-5.1" },
+        provider: [{ id: "zhipu", name: "Zhipu AI Coding Plan", models: { "glm-5.1": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "zhipu", id: "glm-5.1" } }),
+          messages: () => [],
+          status: () => ({ type: "queued" })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("5h 25% | week 1%");
+  });
+
+  it("uses cached usage quota rows while the main status is busy", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["quota_5h", "quota_weekly"] }));
+    process.env.ZHIPU_API_KEY = "test-token";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          limits: [
+            { type: "TOKENS_LIMIT", unit: 3, percentage: 8 },
+            { type: "TOKENS_LIMIT", unit: 6, percentage: 13 }
+          ]
+        }
+      }),
+      text: async () => ""
+    } as Response);
+    const api = {
+      state: {
+        config: { model: "zhipu/glm-5.1-cache" },
+        provider: [{ id: "zhipu", name: "Zhipu AI Coding Plan", models: { "glm-5.1-cache": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "zhipu", id: "glm-5.1-cache" } }),
+          messages: () => [],
+          status: () => ({ type: "busy" })
+        }
+      }
+    };
+
+    await buildTuiUsageText(api as any, "ses_1");
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("5h 8% | week 13%");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("renders Xiaomi MiMo Token Plan remaining credits in the statusline", async () => {

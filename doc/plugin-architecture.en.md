@@ -190,7 +190,7 @@ Statusline refreshes happen on:
 | recent model state file signature change | reload after local model switch detection |
 | 60 second interval | full fallback refresh |
 
-Provider quota collection has a 60 second cache in `providers.ts`; statusline quota rendering also applies a 1 second timeout so a slow provider does not stall prompt rendering. `/usage` intentionally uses `force: true` to fetch fresh data.
+Provider quota collection has a 60 second fresh cache and a 10 minute stale cache in `providers.ts`. Statusline quota rendering first uses cached data, then refreshes with a 2.5 second statusline-side timeout so a slow provider does not stall prompt rendering. Concurrent statusline refreshes share one in-flight provider request. `/usage` intentionally uses `force: true` to fetch fresh data and update the cache.
 
 ## Context Hygiene
 

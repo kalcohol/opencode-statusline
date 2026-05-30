@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import {
   collectProviderUsage,
   findUsageWindow,
+  readCachedProviderUsage,
   type ProviderInfoLike,
   type UsageBalance,
   type UsageReport
@@ -18,7 +19,7 @@ import {
 } from "./format.js";
 import { loadStatuslineConfig, type StatuslineFieldID } from "./statusline-config.js";
 
-const STATUSLINE_QUOTA_TIMEOUT_MS = 1_000;
+const STATUSLINE_QUOTA_TIMEOUT_MS = 2_500;
 const SESSION_MESSAGES_FALLBACK_TIMEOUT_MS = 300;
 const GIT_DIFF_TIMEOUT_MS = 750;
 const GIT_DIFF_CACHE_TTL_MS = 1_500;
@@ -507,8 +508,12 @@ function sessionStatusLabel(status: unknown): string | undefined {
   return type;
 }
 
-function isInactiveSubagentStatus(status: string | undefined): boolean {
+function isInactiveSessionStatus(status: string | undefined): boolean {
   return !status || ["idle", "done", "complete", "completed"].includes(status);
+}
+
+function allowsBackgroundStatuslineRefresh(status: string | undefined): boolean {
+  return isInactiveSessionStatus(status) || status === "queued" || status === "pending";
 }
 
 function agentStatusText(status: string | undefined): string | undefined {
@@ -563,7 +568,7 @@ async function sessionMessages(api: TuiApiLike, sessionID: string): Promise<read
   const local = api.state.session.messages(sessionID);
   if (sessionTokenTotals(local).total > 0) return local;
   const status = sessionStatusLabel(api.state.session.status(sessionID));
-  if (!isInactiveSubagentStatus(status)) return local;
+  if (!allowsBackgroundStatuslineRefresh(status)) return local;
   const remote = await withTimeout(getClientSessionMessages(api, sessionID), SESSION_MESSAGES_FALLBACK_TIMEOUT_MS) ?? [];
   if (sessionTokenTotals(remote).total > 0) return remote;
   return local.length > 0 ? local : remote;
@@ -585,7 +590,7 @@ async function subagentText(api: TuiApiLike, sessionID: string, children?: reado
   const session = api.state.session.get(sessionID);
   if (isRecord(session) && toNonEmptyString(session.parentID)) {
     const status = sessionStatusLabel(api.state.session.status(sessionID));
-    return isInactiveSubagentStatus(status) ? undefined : `sub ${status}`;
+    return allowsBackgroundStatuslineRefresh(status) ? undefined : `sub ${status}`;
   }
 
   const childSessions = children ?? await getChildSessions(api, sessionID);
@@ -594,7 +599,7 @@ async function subagentText(api: TuiApiLike, sessionID: string, children?: reado
     const childID = isRecord(child) ? toNonEmptyString(child.id) : undefined;
     return childID ? sessionStatusLabel(api.state.session.status(childID)) : undefined;
   });
-  const active = statuses.filter((status) => !isInactiveSubagentStatus(status));
+  const active = statuses.filter((status) => !allowsBackgroundStatuslineRefresh(status));
   return active.length ? `sub ${active.length} ${active[0]}` : undefined;
 }
 
@@ -633,13 +638,13 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
   const meta = await resolveTuiModel(api, sessionID);
   const provider = api.state.provider.find((item) => item.id === meta.providerID);
   const sessionStatus = sessionStatusLabel(api.state.session.status(sessionID));
-  const sessionInactive = isInactiveSubagentStatus(sessionStatus);
+  const canRefreshBackgroundFields = allowsBackgroundStatuslineRefresh(sessionStatus);
   const contextUsed = latestContextTokens(messages);
   const contextLimit = modelContextLimit(provider, meta.modelID);
   const generationMetrics = latestGenerationMetrics(api, messages);
-  const diffStats = fields.includes("git_diff_stats") && sessionInactive ? await gitDiffStats(api) : undefined;
+  const diffStats = fields.includes("git_diff_stats") && canRefreshBackgroundFields ? await gitDiffStats(api) : undefined;
   const childFields = fields.some((field) => ["subagent_status", "session_io", "session_total", "session_cost"].includes(field));
-  const children = childFields && sessionInactive ? await getChildSessions(api, sessionID) : [];
+  const children = childFields && canRefreshBackgroundFields ? await getChildSessions(api, sessionID) : [];
   const allMessages = childFields ? await sessionMessagesWithChildren(api, messages, children) : messages;
   const sessionTokens = sessionTokenTotals(allMessages);
   const cost = fields.includes("session_cost")
@@ -648,17 +653,19 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
 
   let quotaReport;
   const providerUsageFields = fields.some((field) => ["quota_5h", "quota_weekly", "provider_balance"].includes(field));
-  if (meta.providerID && providerUsageFields && sessionInactive) {
-    quotaReport = await withTimeout(
-      collectProviderUsage({
-        providerID: meta.providerID,
-        providerName: toNonEmptyString(provider?.name),
-        modelID: meta.modelID,
-        config: api.state.config,
-        providerInfo: provider
-      }),
-      STATUSLINE_QUOTA_TIMEOUT_MS
-    );
+  if (meta.providerID && providerUsageFields) {
+    const usageInput = {
+      providerID: meta.providerID,
+      providerName: toNonEmptyString(provider?.name),
+      modelID: meta.modelID,
+      config: api.state.config,
+      providerInfo: provider
+    };
+    quotaReport = readCachedProviderUsage(usageInput, { allowStale: true });
+    if (canRefreshBackgroundFields) {
+      const refreshed = await withTimeout(collectProviderUsage(usageInput), STATUSLINE_QUOTA_TIMEOUT_MS);
+      if (refreshed) quotaReport = refreshed;
+    }
     if (quotaReport && !quotaReport.ok) quotaReport = undefined;
   }
 

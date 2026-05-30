@@ -421,4 +421,4 @@ Provider id `opencode` は認識されますが、OpenCode Zen は現在 public 
 
 absolute reset timestamps は `/usage` で local time の固定幅 `YYYY-MM-DD HH:mm:ss` fields として表示します。relative reset durations は compact duration text のままです。
 
-Quota collection は provider/model kind ごとに 60 秒 cache されます。`/usage` は fresh read を強制し、statusline quota/balance fields は cache を使い、statusline 側で 1 秒 timeout も適用します。
+Quota collection は provider/model kind ごとに 60 秒 cache され、statusline fallback 用に stale result を 10 分保持します。`/usage` は fresh read を強制して cache を更新します。statusline quota/balance fields は cached rows を先に使い、並行する in-flight refresh を共有し、statusline 側で 2.5 秒 timeout も適用します。

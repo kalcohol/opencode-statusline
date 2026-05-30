@@ -149,6 +149,8 @@ reset 時刻はローカル時刻で、固定幅の `YYYY-MM-DD HH:mm:ss` 形式
 
 `Provider balance` は `/usage` dialog の balance rows を再利用します。remaining/limit remaining を優先し、次に balance/credits rows を表示します。DeepSeek、OpenRouter、OpenAI/Codex credits など balance data がある provider では表示され、money amount のない純粋な subscription quota data では省略されます。
 
+Quota/balance fields は provider usage cache を再利用します。手動で `/usage` を実行した後は、短い `queued`/`pending` 状態や session busy 中でも statusline は cached data を優先し、fields を空にしません。
+
 `Git diff stats` はローカル git worktree だけを読みます。HEAD に対する tracked file の変更を `git diff --numstat` と `git diff --cached --numstat` から合計します。untracked file と binary file は含めません。このフィールドは statusline refresh で再計算され、session 更新時に短い cache をクリアするため、streaming output 中に git process を過剰に起動しません。
 
 subscription や coding plan provider では、`Session cost` は実際の課金額ではなく token 単価による等価推定になることがあります。OpenCode が message に記録した cost を優先し、ない場合だけ model catalog pricing へ fallback します。

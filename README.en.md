@@ -149,6 +149,8 @@ Unavailable provider/model data is omitted. For example, OpenRouter has balance 
 
 `Provider balance` reuses the balance rows shown by `/usage`. It prefers remaining/limit remaining rows, then balance/credits rows. It renders for providers with balance data such as DeepSeek, OpenRouter, and OpenAI/Codex credits, and is omitted for pure subscription quota data with no money amount.
 
+Quota/balance fields reuse the provider usage cache. After a manual `/usage` refresh, the statusline prefers cached data even during brief `queued`/`pending` states or while the session is busy, instead of clearing the fields.
+
 `Git diff stats` reads only the local git worktree. It sums tracked-file changes from `git diff --numstat` and `git diff --cached --numstat` relative to HEAD; untracked files and binary files are not included. The field is recomputed on statusline refresh and clears its short cache when the session updates, avoiding repeated git processes during streaming output.
 
 For subscription or coding-plan providers, `Session cost` may be an equivalent per-token estimate rather than an actual amount charged. It prefers OpenCode's recorded message cost when present, then falls back to model catalog pricing.

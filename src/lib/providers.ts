@@ -71,7 +71,18 @@ type ProviderKind =
 const USER_AGENT = "OpenCode-Statusline/0.1";
 const DEFAULT_TIMEOUT_MS = 12_000;
 const CACHE_TTL_MS = 60_000;
-const cache = new Map<string, { expiresAt: number; report: UsageReport }>();
+const CACHE_STALE_TTL_MS = 10 * 60_000;
+const cache = new Map<string, { expiresAt: number; staleUntil: number; report: UsageReport }>();
+const inflight = new Map<string, Promise<UsageReport>>();
+
+export type CollectProviderUsageInput = {
+  providerID: string;
+  providerName?: string;
+  modelID?: string;
+  config?: unknown;
+  providerInfo?: ProviderInfoLike;
+  force?: boolean;
+};
 
 function baseReport(input: {
   providerID: string;
@@ -132,6 +143,27 @@ function providerKind(providerID: string): ProviderKind {
   if (id === "opencode") return "opencode-zen";
   if (["openai", "codex", "chatgpt"].includes(id)) return "openai-oauth";
   return "unknown";
+}
+
+function providerUsageCacheKey(input: Pick<CollectProviderUsageInput, "providerID" | "modelID">): string {
+  const kind = providerKind(input.providerID);
+  return `${kind}:${input.providerID}:${input.modelID ?? ""}`;
+}
+
+export function readCachedProviderUsage(
+  input: Pick<CollectProviderUsageInput, "providerID" | "modelID">,
+  options: { allowStale?: boolean } = {}
+): UsageReport | undefined {
+  const cached = cache.get(providerUsageCacheKey(input));
+  if (!cached) return undefined;
+  const now = Date.now();
+  if (cached.expiresAt > now || (options.allowStale && cached.staleUntil > now)) return cached.report;
+  return undefined;
+}
+
+export function clearProviderUsageCache(): void {
+  cache.clear();
+  inflight.clear();
 }
 
 function credentialMissing(providerID: string, providerName: string | undefined, modelID: string | undefined): UsageReport {
@@ -790,56 +822,62 @@ export function findUsageWindow(report: UsageReport | undefined, key: UsageWindo
   return report?.windows.find((window) => window.key === key);
 }
 
-export async function collectProviderUsage(input: {
-  providerID: string;
-  providerName?: string;
-  modelID?: string;
-  config?: unknown;
-  providerInfo?: ProviderInfoLike;
-  force?: boolean;
-}): Promise<UsageReport> {
+export async function collectProviderUsage(input: CollectProviderUsageInput): Promise<UsageReport> {
   const kind = providerKind(input.providerID);
-  const cacheKey = `${kind}:${input.providerID}:${input.modelID ?? ""}`;
-  const cached = cache.get(cacheKey);
-  if (!input.force && cached && cached.expiresAt > Date.now()) return cached.report;
+  const cacheKey = providerUsageCacheKey(input);
+  const cached = readCachedProviderUsage(input);
+  if (!input.force && cached) return cached;
 
-  let report: UsageReport;
-  switch (kind) {
-    case "zai":
-      report = await queryZaiLike({ ...input, zhipu: false });
-      break;
-    case "zhipu":
-      report = await queryZaiLike({ ...input, zhipu: true });
-      break;
-    case "kimi":
-      report = await queryKimi(input);
-      break;
-    case "minimax-cn":
-      report = await queryMiniMaxCN(input);
-      break;
-    case "xiaomi-mimo":
-      report = await queryXiaomiMiMo(input);
-      break;
-    case "deepseek":
-      report = await queryDeepSeek(input);
-      break;
-    case "opencode-go":
-      report = await queryOpenCodeGo(input);
-      break;
-    case "openrouter":
-      report = await queryOpenRouter(input);
-      break;
-    case "openai-oauth":
-      report = await queryOpenAI(input);
-      break;
-    case "opencode-zen":
-      report = errorReport({ ...input, error: "OpenCode Zen does not expose a public balance/quota API" });
-      break;
-    default:
-      report = errorReport({ ...input, error: `Provider '${input.providerID}' has no supported usage collector` });
-      break;
+  const pending = !input.force ? inflight.get(cacheKey) : undefined;
+  if (pending) return pending;
+
+  const promise = (async () => {
+    let report: UsageReport;
+    switch (kind) {
+      case "zai":
+        report = await queryZaiLike({ ...input, zhipu: false });
+        break;
+      case "zhipu":
+        report = await queryZaiLike({ ...input, zhipu: true });
+        break;
+      case "kimi":
+        report = await queryKimi(input);
+        break;
+      case "minimax-cn":
+        report = await queryMiniMaxCN(input);
+        break;
+      case "xiaomi-mimo":
+        report = await queryXiaomiMiMo(input);
+        break;
+      case "deepseek":
+        report = await queryDeepSeek(input);
+        break;
+      case "opencode-go":
+        report = await queryOpenCodeGo(input);
+        break;
+      case "openrouter":
+        report = await queryOpenRouter(input);
+        break;
+      case "openai-oauth":
+        report = await queryOpenAI(input);
+        break;
+      case "opencode-zen":
+        report = errorReport({ ...input, error: "OpenCode Zen does not expose a public balance/quota API" });
+        break;
+      default:
+        report = errorReport({ ...input, error: `Provider '${input.providerID}' has no supported usage collector` });
+        break;
+    }
+
+    const now = Date.now();
+    cache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, staleUntil: now + CACHE_STALE_TTL_MS, report });
+    return report;
+  })();
+
+  if (!input.force) inflight.set(cacheKey, promise);
+  try {
+    return await promise;
+  } finally {
+    if (inflight.get(cacheKey) === promise) inflight.delete(cacheKey);
   }
-
-  cache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, report });
-  return report;
 }
