@@ -38,7 +38,7 @@ tests/
 | Area | Implementation |
 | --- | --- |
 | Linux/macOS の `session_prompt` slot | `api.ui.Prompt` を wrap し、host props を保持しながら prompt の `right` node に statusline fields を注入 |
-| Windows の `session_prompt_right` slot | `api.ui.Prompt` を置き換えず、OpenCode native prompt の右側に statusline fields を追加 |
+| Windows の `session_prompt` slot | `api.ui.Prompt` を wrap し、prompt の下に右寄せの独立した statusline 行を表示 |
 | `/usage` command | `api.keymap.registerLayer`, `slashName: "usage"` |
 | `/statusline` command | `api.keymap.registerLayer`, `slashName: "statusline"` |
 | usage close binding | usage dialog が開いている間の dialog-layer `return` binding |
@@ -147,12 +147,12 @@ plugin は次と共存する必要があります。
 - terminal width changes
 - optional OpenCode sidebar width
 
-Linux/macOS では `PromptRightContent` が `onSizeChange` で元の right slot width を測定します。Windows では slot-only API が native right-side width を公開しないため、`StatuslineRightSlot` は保守的な予約幅を使います。`StatuslineView` は次の budget を計算します。
+Linux/macOS では `PromptRightContent` が `onSizeChange` で元の right slot width を測定します。Windows では statusline を prompt の下に表示し、native prompt row を共有しないことで、新しい opencode build で stall しうる right-slot layout path を避けます。`StatuslineView` は次の budget を計算します。
 
 ```text
 estimated prompt inner width
-- estimated native left model row width
-- measured or reserved native right-side prompt width
+- estimated native left model row width when sharing the prompt row
+- measured native right-side prompt width when sharing the prompt row
 - row gaps and safety columns
 ```
 
@@ -182,13 +182,15 @@ Statusline は次で refresh されます。
 
 | Trigger | Behavior |
 | --- | --- |
-| `/statusline` field selection change | immediate queued reload |
-| `session.updated` | current session を reload |
-| `message.updated` / `message.removed` | token/context 関連 fields を reload |
-| `tui.session.select` | active session が変わったとき reload |
+| `/statusline` field selection change | 150ms と 600ms に queued reload |
+| `session.updated` | current session を 150ms と 600ms に queued reload |
+| `message.updated` / `message.removed` | token/context 関連 fields を 150ms と 600ms に queued reload |
+| `tui.session.select` | active session が変わったとき 150ms と 600ms に queued reload |
 | `session.sidebar.toggle` command | layout budget を再計算 |
 | recent model state file signature change | local model switch detection 後に reload |
 | 60 second interval | full fallback refresh |
+
+Streaming の `message.part.updated` と `message.part.delta` events は full statusline rebuild を起こしません。次の `message.updated` または session event で最終 token/context data を refresh します。
 
 Provider quota collection は `providers.ts` で 60 秒の fresh cache と 10 分の stale cache を持ちます。statusline quota rendering はまず cached data を使い、その後 2.5 秒の statusline-side timeout 付きで refresh するため、遅い provider が prompt rendering を止めません。並行する statusline refresh は同じ in-flight provider request を共有します。`/usage` は意図的に `force: true` で fresh data を取得し、cache を更新します。
 

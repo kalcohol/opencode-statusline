@@ -155,7 +155,7 @@ Quota/balance fields reuse the provider usage cache. After a manual `/usage` ref
 
 For subscription or coding-plan providers, `Session cost` may be an equivalent per-token estimate rather than an actual amount charged. It prefers OpenCode's recorded message cost when present, then falls back to model catalog pricing.
 
-On Linux/macOS, the statusline wraps `session_prompt` and preserves the existing `session_prompt_right` content so it can measure the right-side width. On Windows, it only registers `session_prompt_right` to avoid interfering with OpenCode's native prompt status rendering. Both paths dynamically truncate this plugin's fields to avoid wrapping onto the next line.
+The statusline always registers `session_prompt`. On Linux/macOS, it wraps `api.ui.Prompt` and preserves existing `session_prompt_right` content so it can measure the right-side width. On Windows, it wraps the native Prompt and renders the statusline as a separate right-aligned row below it, avoiding the right-slot layout path in newer opencode builds. Both paths dynamically truncate this plugin's fields to avoid wrapping onto the next line.
 
 ## Supported Providers
 

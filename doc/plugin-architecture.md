@@ -38,7 +38,7 @@ tests/
 | Area | Implementation |
 | --- | --- |
 | `session_prompt` slot on Linux/macOS | Wraps `api.ui.Prompt`, preserves host props, and injects statusline fields into the prompt `right` node |
-| `session_prompt_right` slot on Windows | Adds statusline fields to OpenCode's native prompt right area without replacing `api.ui.Prompt` |
+| `session_prompt` slot on Windows | Wraps `api.ui.Prompt` and renders statusline fields as a separate right-aligned row below the prompt |
 | `/usage` command | `api.keymap.registerLayer`, `slashName: "usage"` |
 | `/statusline` command | `api.keymap.registerLayer`, `slashName: "statusline"` |
 | usage close binding | Dialog-layer `return` binding while the usage dialog is open |
@@ -147,12 +147,12 @@ The plugin must coexist with:
 - terminal width changes
 - optional OpenCode sidebar width
 
-`PromptRightContent` measures the original right slot width via `onSizeChange` on Linux/macOS. `StatuslineRightSlot` uses a conservative reserve on Windows, because the slot-only API does not expose the native right-side width. `StatuslineView` computes its budget as:
+`PromptRightContent` measures the original right slot width via `onSizeChange` on Linux/macOS. On Windows, the statusline renders below the prompt and does not share the native prompt row, avoiding the right-slot layout path that can stall on newer opencode builds. `StatuslineView` computes its budget as:
 
 ```text
 estimated prompt inner width
-- estimated native left model row width
-- measured or reserved native right-side prompt width
+- estimated native left model row width when sharing the prompt row
+- measured native right-side prompt width when sharing the prompt row
 - row gaps and safety columns
 ```
 
@@ -182,13 +182,15 @@ Statusline refreshes happen on:
 
 | Trigger | Behavior |
 | --- | --- |
-| `/statusline` field selection change | immediate queued reload |
-| `session.updated` | reload for the current session |
-| `message.updated` / `message.removed` | reload token/context-related fields |
-| `tui.session.select` | reload when the active session changes |
+| `/statusline` field selection change | queued reload at 150ms and 600ms |
+| `session.updated` | queued reload at 150ms and 600ms for the current session |
+| `message.updated` / `message.removed` | queued reload at 150ms and 600ms for token/context-related fields |
+| `tui.session.select` | queued reload at 150ms and 600ms when the active session changes |
 | `session.sidebar.toggle` command | recompute layout budget |
 | recent model state file signature change | reload after local model switch detection |
 | 60 second interval | full fallback refresh |
+
+Streaming `message.part.updated` and `message.part.delta` events do not trigger a full statusline rebuild; the next `message.updated` or session event refreshes the final token/context data.
 
 Provider quota collection has a 60 second fresh cache and a 10 minute stale cache in `providers.ts`. Statusline quota rendering first uses cached data, then refreshes with a 2.5 second statusline-side timeout so a slow provider does not stall prompt rendering. Concurrent statusline refreshes share one in-flight provider request. `/usage` intentionally uses `force: true` to fetch fresh data and update the cache.
 

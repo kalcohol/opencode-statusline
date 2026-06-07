@@ -21,7 +21,9 @@ const id = "opencode-statusline";
 const STATUSLINE_SLOT_ORDER = 95;
 const MODEL_POLL_INTERVAL_MS = 2_000;
 const FULL_REFRESH_INTERVAL_MS = 60_000;
-const EVENT_REFRESH_DELAY_MS = 150;
+const STATUSLINE_RENDER_TIMEOUT_MS = 4_000;
+const EVENT_REFRESH_DELAYS_MS = [150, 600] as const;
+const MOUNT_RECOVERY_DELAYS_MS = [500, 1_500, 4_000] as const;
 const SESSION_SIDEBAR_WIDTH = 42;
 const SESSION_HORIZONTAL_PADDING = 4;
 const PROMPT_HORIZONTAL_PADDING = 4;
@@ -29,7 +31,6 @@ const PROMPT_LEFT_BORDER_WIDTH = 1;
 const PROMPT_ROW_GAP = 1;
 const RIGHT_CONTENT_GAP = 1;
 const STATUSLINE_SAFETY_COLUMNS = 2;
-const HOST_PROMPT_RIGHT_RESERVE_COLUMNS = 36;
 const MIN_STATUSLINE_COLUMNS = 8;
 const STATUSLINE_SEPARATOR = " | ";
 const configListeners = new Set<() => void>();
@@ -207,6 +208,30 @@ type StatuslineDisplayPart = {
 type StatuslineSegment = StatuslineDisplayPart & {
   separator?: boolean;
 };
+
+type PromptSlotProps = {
+  session_id: string;
+  visible?: boolean;
+  disabled?: boolean;
+  on_submit?: () => void;
+  ref?: (ref: TuiPromptRef | undefined) => void;
+};
+
+function withTimeout<Value>(promise: Promise<Value>, ms: number): Promise<Value | undefined> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(undefined), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
 
 function displayColumns(value: string): number {
   let width = 0;
@@ -387,18 +412,20 @@ function statuslineColumnsBudget(input: {
   sessionID: string;
   terminalColumns: number;
   rightSlotColumns: number;
+  reservePromptLeftColumns: boolean;
 }): number {
   const promptColumns = estimatePromptInnerColumns(input.api, input.sessionID, input.terminalColumns);
-  const leftColumns = estimatePromptLeftColumns(input.api, input.sessionID);
+  const leftColumns = input.reservePromptLeftColumns ? estimatePromptLeftColumns(input.api, input.sessionID) : 0;
   const rightSlotColumns = Math.max(0, Math.ceil(input.rightSlotColumns));
   const rightGap = rightSlotColumns > 0 ? RIGHT_CONTENT_GAP : 0;
+  const promptRowGap = input.reservePromptLeftColumns ? PROMPT_ROW_GAP : 0;
   return Math.max(
     0,
     promptColumns
       - leftColumns
       - rightSlotColumns
       - rightGap
-      - PROMPT_ROW_GAP
+      - promptRowGap
       - STATUSLINE_SAFETY_COLUMNS
   );
 }
@@ -463,6 +490,8 @@ function StatuslineView(props: {
   api: TuiPluginApi;
   sessionID: string;
   rightSlotColumns: number;
+  reservePromptLeftColumns?: boolean;
+  fillWidth?: boolean;
 }): JSX.Element {
   const [parts, setParts] = createSignal<StatuslineDisplayPart[]>([]);
   const [layoutVersion, setLayoutVersion] = createSignal(0);
@@ -473,7 +502,8 @@ function StatuslineView(props: {
       api: props.api,
       sessionID: props.sessionID,
       terminalColumns: dimensions().width,
-      rightSlotColumns: props.rightSlotColumns
+      rightSlotColumns: props.rightSlotColumns,
+      reservePromptLeftColumns: props.reservePromptLeftColumns ?? true
     });
   });
   const displaySegments = createMemo(() => truncateStatuslineSegments(parts(), maxWidth()));
@@ -483,7 +513,7 @@ function StatuslineView(props: {
   let version = 0;
   let inFlight = false;
   let pendingReload = false;
-  let queuedReloadTimer: ReturnType<typeof setTimeout> | undefined;
+  const queuedReloadTimers = new Map<number, ReturnType<typeof setTimeout>>();
   let lastRecentModelKey = "";
 
   const recentModelKey = () => {
@@ -501,9 +531,9 @@ function StatuslineView(props: {
     pendingReload = false;
     lastRecentModelKey = recentModelKey();
     const currentVersion = ++version;
-    void buildTuiStatuslineParts(props.api, props.sessionID)
+    void withTimeout(buildTuiStatuslineParts(props.api, props.sessionID), STATUSLINE_RENDER_TIMEOUT_MS)
       .then((next) => {
-        if (disposed || currentVersion !== version) return;
+        if (disposed || currentVersion !== version || !next) return;
         setParts(next);
       })
       .catch(() => {
@@ -514,19 +544,27 @@ function StatuslineView(props: {
         inFlight = false;
         if (disposed || !pendingReload) return;
         pendingReload = false;
-        queueReload();
+        scheduleRefresh();
       });
   };
 
-  const queueReload = () => {
-    if (queuedReloadTimer) return;
+  const queueReload = (delay: number) => {
+    if (queuedReloadTimers.has(delay)) return;
     const timer = setTimeout(() => {
-      queuedReloadTimer = undefined;
+      queuedReloadTimers.delete(delay);
       timers.delete(timer);
       reload();
-    }, EVENT_REFRESH_DELAY_MS);
-    queuedReloadTimer = timer;
+    }, delay);
+    queuedReloadTimers.set(delay, timer);
     timers.add(timer);
+  };
+
+  const scheduleRefresh = () => {
+    for (const delay of EVENT_REFRESH_DELAYS_MS) queueReload(delay);
+  };
+
+  const scheduleMountRecovery = () => {
+    for (const delay of MOUNT_RECOVERY_DELAYS_MS) queueReload(delay);
   };
 
   const pollRecentModel = () => {
@@ -537,37 +575,32 @@ function StatuslineView(props: {
   };
 
   createEffect(reload);
+  scheduleMountRecovery();
 
   const fullRefreshInterval = setInterval(reload, FULL_REFRESH_INTERVAL_MS);
   const modelPollInterval = setInterval(pollRecentModel, MODEL_POLL_INTERVAL_MS);
   const unsubscribers = [
-    onConfigChanged(queueReload),
+    onConfigChanged(scheduleRefresh),
     props.api.event.on("session.updated", (event) => {
       if (eventMatchesSession(event, props.sessionID)) {
         invalidateGitDiffStatsCache();
-        queueReload();
+        scheduleRefresh();
       }
     }),
     props.api.event.on("session.status", (event) => {
-      if (eventMatchesSession(event, props.sessionID)) queueReload();
+      if (eventMatchesSession(event, props.sessionID)) scheduleRefresh();
     }),
     props.api.event.on("session.idle", (event) => {
-      if (eventMatchesSession(event, props.sessionID)) queueReload();
+      if (eventMatchesSession(event, props.sessionID)) scheduleRefresh();
     }),
     props.api.event.on("message.updated", (event) => {
-      if (eventMatchesSession(event, props.sessionID)) queueReload();
-    }),
-    props.api.event.on("message.part.updated", (event) => {
-      if (eventMatchesSession(event, props.sessionID)) queueReload();
-    }),
-    props.api.event.on("message.part.delta", (event) => {
-      if (eventMatchesSession(event, props.sessionID)) queueReload();
+      if (eventMatchesSession(event, props.sessionID)) scheduleRefresh();
     }),
     props.api.event.on("message.removed", (event) => {
-      if (eventMatchesSession(event, props.sessionID)) queueReload();
+      if (eventMatchesSession(event, props.sessionID)) scheduleRefresh();
     }),
     props.api.event.on("tui.session.select", (event) => {
-      if (eventMatchesSession(event, props.sessionID)) queueReload();
+      if (eventMatchesSession(event, props.sessionID)) scheduleRefresh();
     }),
     props.api.event.on("tui.command.execute", (event) => {
       if ((event as any).properties?.command !== "session.sidebar.toggle") return;
@@ -587,31 +620,43 @@ function StatuslineView(props: {
 
   return (
     <Show when={displaySegments().length}>
-      <box width={displayWidth()} flexShrink={0} flexDirection="row">
-        <For each={displaySegments()}>
-          {(segment) => (
-            <text
-              fg={statuslineSegmentColor(props.api.theme.current, segment)}
-              wrapMode="none"
-              width={displayColumns(segment.text)}
-              flexShrink={0}
-            >
-              {segment.text}
-            </text>
-          )}
-        </For>
-      </box>
+      <Show
+        when={props.fillWidth}
+        fallback={
+          <box width={displayWidth()} flexShrink={0} flexDirection="row">
+            <For each={displaySegments()}>
+              {(segment) => (
+                <text
+                  fg={statuslineSegmentColor(props.api.theme.current, segment)}
+                  wrapMode="none"
+                  width={displayColumns(segment.text)}
+                  flexShrink={0}
+                >
+                  {segment.text}
+                </text>
+              )}
+            </For>
+          </box>
+        }
+      >
+        <box width="100%" flexShrink={0} flexDirection="row" justifyContent="flex-end">
+          <box width={displayWidth()} flexShrink={0} flexDirection="row">
+            <For each={displaySegments()}>
+              {(segment) => (
+                <text
+                  fg={statuslineSegmentColor(props.api.theme.current, segment)}
+                  wrapMode="none"
+                  width={displayColumns(segment.text)}
+                  flexShrink={0}
+                >
+                  {segment.text}
+                </text>
+              )}
+            </For>
+          </box>
+        </box>
+      </Show>
     </Show>
-  );
-}
-
-function StatuslineRightSlot(props: { api: TuiPluginApi; sessionID: string }): JSX.Element {
-  return (
-    <StatuslineView
-      api={props.api}
-      sessionID={props.sessionID}
-      rightSlotColumns={HOST_PROMPT_RIGHT_RESERVE_COLUMNS}
-    />
   );
 }
 
@@ -641,35 +686,50 @@ function PromptRightContent(props: { api: TuiPluginApi; sessionID: string }): JS
   );
 }
 
+function PromptWithInlineStatusline(props: { api: TuiPluginApi; prompt: PromptSlotProps }): JSX.Element {
+  return (
+    <props.api.ui.Prompt
+      sessionID={props.prompt.session_id}
+      visible={props.prompt.visible}
+      disabled={props.prompt.disabled}
+      onSubmit={props.prompt.on_submit}
+      ref={props.prompt.ref as any}
+      right={<PromptRightContent api={props.api} sessionID={props.prompt.session_id} />}
+    />
+  );
+}
+
+function PromptWithStatuslineBelow(props: { api: TuiPluginApi; prompt: PromptSlotProps }): JSX.Element {
+  return (
+    <box gap={0}>
+      <props.api.ui.Prompt
+        sessionID={props.prompt.session_id}
+        visible={props.prompt.visible}
+        disabled={props.prompt.disabled}
+        onSubmit={props.prompt.on_submit}
+        ref={props.prompt.ref as any}
+      />
+      <StatuslineView
+        api={props.api}
+        sessionID={props.prompt.session_id}
+        rightSlotColumns={0}
+        reservePromptLeftColumns={false}
+        fillWidth
+      />
+    </box>
+  );
+}
+
 const tui: TuiPlugin = async (api) => {
   api.slots.register({
     order: STATUSLINE_SLOT_ORDER,
-    slots: process.platform === "win32"
-      ? {
-          session_prompt_right(_ctx, props: { session_id: string }) {
-            return <StatuslineRightSlot api={api} sessionID={props.session_id} />;
-          }
-        }
-      : {
-          session_prompt(_ctx, props: {
-            session_id: string;
-            visible?: boolean;
-            disabled?: boolean;
-            on_submit?: () => void;
-            ref?: (ref: TuiPromptRef | undefined) => void;
-          }) {
-            return (
-              <api.ui.Prompt
-                sessionID={props.session_id}
-                visible={props.visible}
-                disabled={props.disabled}
-                onSubmit={props.on_submit}
-                ref={props.ref as any}
-                right={<PromptRightContent api={api} sessionID={props.session_id} />}
-              />
-            );
-          }
-        }
+    slots: {
+      session_prompt(_ctx, props: PromptSlotProps) {
+        return process.platform === "win32"
+          ? <PromptWithStatuslineBelow api={api} prompt={props} />
+          : <PromptWithInlineStatusline api={api} prompt={props} />;
+      }
+    }
   });
 
   api.keymap.registerLayer({
