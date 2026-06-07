@@ -104,6 +104,7 @@ describe("buildTuiStatusline", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     clearProviderUsageCache();
     if (previousConfigPath === undefined) delete process.env.OPENCODE_STATUSLINE_CONFIG;
@@ -225,6 +226,37 @@ describe("buildTuiStatusline", () => {
 
     await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("1K in / 2K out | 3K used");
     expect(children).not.toHaveBeenCalled();
+  });
+
+  it("does not wait indefinitely for slow child-session lookup", async () => {
+    vi.useFakeTimers();
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_total"] }));
+    const children = vi.fn(() => new Promise<unknown[]>(() => {}));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [assistantMessage("msg_parent", 1024, 2048)],
+          status: () => ({ type: "idle" })
+        }
+      },
+      client: {
+        session: {
+          children
+        }
+      }
+    };
+
+    const result = buildTuiStatusline(api as any, "ses_1");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(result).resolves.toBe("3K used");
+    expect(children.mock.calls[0]?.[0]).toEqual({ sessionID: "ses_1" });
+    expect(children.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("does not let an explicit zero token total hide input and output tokens", async () => {

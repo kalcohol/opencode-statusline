@@ -21,6 +21,7 @@ import { loadStatuslineConfig, type StatuslineFieldID } from "./statusline-confi
 
 const STATUSLINE_QUOTA_TIMEOUT_MS = 2_500;
 const SESSION_MESSAGES_FALLBACK_TIMEOUT_MS = 300;
+const SESSION_CHILDREN_TIMEOUT_MS = 300;
 const GIT_DIFF_TIMEOUT_MS = 750;
 const GIT_DIFF_CACHE_TTL_MS = 1_500;
 const execFileAsync = promisify(execFile);
@@ -173,6 +174,34 @@ function withTimeout<Value>(promise: Promise<Value>, ms: number): Promise<Value 
         resolve(undefined);
       }
     );
+  });
+}
+
+function clientCallWithTimeout<Value>(
+  run: (signal: AbortSignal) => Promise<Value>,
+  ms: number
+): Promise<{ timedOut: boolean; value?: Value }> {
+  return new Promise((resolve) => {
+    const controller = new AbortController();
+    let settled = false;
+    const finish = (result: { timedOut: boolean; value?: Value }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      controller.abort();
+      finish({ timedOut: true });
+    }, ms);
+    try {
+      run(controller.signal).then(
+        (value) => finish({ timedOut: false, value }),
+        () => finish({ timedOut: controller.signal.aborted })
+      );
+    } catch {
+      finish({ timedOut: controller.signal.aborted });
+    }
   });
 }
 
@@ -458,6 +487,7 @@ async function runGitNumstat(cwd: string, args: string[]): Promise<GitDiffStats 
       cwd,
       encoding: "utf8",
       timeout: GIT_DIFF_TIMEOUT_MS,
+      windowsHide: true,
       maxBuffer: 1024 * 1024
     });
     return parseGitNumstat(stdout);
@@ -529,7 +559,12 @@ async function getChildSessions(api: TuiApiLike, sessionID: string): Promise<unk
   ];
   for (const args of attempts) {
     try {
-      const response = await api.client?.session?.children?.(...args);
+      const result = await clientCallWithTimeout(
+        (signal) => Promise.resolve(api.client?.session?.children?.(...args, { signal })),
+        SESSION_CHILDREN_TIMEOUT_MS
+      );
+      if (result.timedOut) return [];
+      const response = result.value;
       const data = isRecord(response) && "data" in response ? response.data : response;
       if (Array.isArray(data)) return data;
     } catch {
@@ -553,7 +588,12 @@ async function getClientSessionMessages(api: TuiApiLike, sessionID: string): Pro
   ];
   for (const args of attempts) {
     try {
-      const response = await api.client?.session?.messages?.(...args);
+      const result = await clientCallWithTimeout(
+        (signal) => Promise.resolve(api.client?.session?.messages?.(...args, { signal })),
+        SESSION_MESSAGES_FALLBACK_TIMEOUT_MS
+      );
+      if (result.timedOut) return [];
+      const response = result.value;
       const data = isRecord(response) && "data" in response ? response.data : response;
       if (Array.isArray(data)) return data;
       if (isRecord(data) && Array.isArray(data.messages)) return data.messages;
@@ -579,11 +619,8 @@ async function sessionMessagesWithChildren(
   messages: readonly unknown[],
   children: readonly unknown[]
 ): Promise<unknown[]> {
-  const allMessages: unknown[] = [...messages];
-  for (const childID of childSessionIDs(children)) {
-    allMessages.push(...await sessionMessages(api, childID));
-  }
-  return allMessages;
+  const childMessages = await Promise.all(childSessionIDs(children).map((childID) => sessionMessages(api, childID)));
+  return [...messages, ...childMessages.flat()];
 }
 
 async function subagentText(api: TuiApiLike, sessionID: string, children?: readonly unknown[]): Promise<string | undefined> {
@@ -593,7 +630,7 @@ async function subagentText(api: TuiApiLike, sessionID: string, children?: reado
     return allowsBackgroundStatuslineRefresh(status) ? undefined : `sub ${status}`;
   }
 
-  const childSessions = children ?? await getChildSessions(api, sessionID);
+  const childSessions = children ?? await withTimeout(getChildSessions(api, sessionID), SESSION_CHILDREN_TIMEOUT_MS) ?? [];
   if (childSessions.length === 0) return undefined;
   const statuses = childSessions.map((child) => {
     const childID = isRecord(child) ? toNonEmptyString(child.id) : undefined;
@@ -644,7 +681,9 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
   const generationMetrics = latestGenerationMetrics(api, messages);
   const diffStats = fields.includes("git_diff_stats") && canRefreshBackgroundFields ? await gitDiffStats(api) : undefined;
   const childFields = fields.some((field) => ["subagent_status", "session_io", "session_total", "session_cost"].includes(field));
-  const children = childFields && canRefreshBackgroundFields ? await getChildSessions(api, sessionID) : [];
+  const children = childFields && canRefreshBackgroundFields
+    ? await withTimeout(getChildSessions(api, sessionID), SESSION_CHILDREN_TIMEOUT_MS) ?? []
+    : [];
   const allMessages = childFields ? await sessionMessagesWithChildren(api, messages, children) : messages;
   const sessionTokens = sessionTokenTotals(allMessages);
   const cost = fields.includes("session_cost")
