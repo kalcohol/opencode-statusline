@@ -155,7 +155,7 @@ Quota/balance fields は provider usage cache を再利用します。手動で 
 
 subscription や coding plan provider では、`Session cost` は実際の課金額ではなく token 単価による等価推定になることがあります。OpenCode が message に記録した cost を優先し、ない場合だけ model catalog pricing へ fallback します。
 
-Statusline は常に `session_prompt` を登録します。Linux/macOS では `api.ui.Prompt` を wrap し、既存の `session_prompt_right` content を保持して右側の幅を測定します。Windows では native Prompt を wrap し、その下に右寄せの独立した statusline 行を表示して、新しい opencode の right-slot layout path を避けます。どちらの経路でもこの plugin の fields を動的に truncate し、prompt が次の行へ折り返さないようにします。
+Statusline は常に `session_prompt` を登録します。Linux/macOS では `api.ui.Prompt` を wrap し、既存の `session_prompt_right` content を保持して右側の幅を測定します。Windows では native Prompt を wrap し、statusline を Prompt の `right` content に入れますが、`session_prompt_right` を登録したり nest-read したりしないことで、新しい opencode の right-slot registration path を避けます。どちらの経路でもこの plugin の fields を動的に truncate し、prompt が次の行へ折り返さないようにします。
 
 ## 対応 Providers
 

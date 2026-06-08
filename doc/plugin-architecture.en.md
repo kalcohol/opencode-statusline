@@ -38,7 +38,7 @@ tests/
 | Area | Implementation |
 | --- | --- |
 | `session_prompt` slot on Linux/macOS | Wraps `api.ui.Prompt`, preserves host props, and injects statusline fields into the prompt `right` node |
-| `session_prompt` slot on Windows | Wraps `api.ui.Prompt` and renders statusline fields as a separate right-aligned row below the prompt |
+| `session_prompt` slot on Windows | Wraps `api.ui.Prompt` and injects statusline fields into the prompt `right` node without registering or reading `session_prompt_right` |
 | `/usage` command | `api.keymap.registerLayer`, `slashName: "usage"` |
 | `/statusline` command | `api.keymap.registerLayer`, `slashName: "statusline"` |
 | usage close binding | Dialog-layer `return` binding while the usage dialog is open |
@@ -147,12 +147,12 @@ The plugin must coexist with:
 - terminal width changes
 - optional OpenCode sidebar width
 
-`PromptRightContent` measures the original right slot width via `onSizeChange` on Linux/macOS. On Windows, the statusline renders below the prompt and does not share the native prompt row, avoiding the right-slot layout path that can stall on newer opencode builds. `StatuslineView` computes its budget as:
+`PromptRightContent` measures the original right slot width via `onSizeChange` on Linux/macOS. On Windows, the prompt right content contains only this plugin's statusline and deliberately does not render `api.ui.Slot name="session_prompt_right"`, avoiding the right-slot registration path that can stall on newer opencode builds. `StatuslineView` computes its budget as:
 
 ```text
 estimated prompt inner width
-- estimated native left model row width when sharing the prompt row
-- measured native right-side prompt width when sharing the prompt row
+- estimated native left model row width
+- measured native right-side prompt width on Linux/macOS
 - row gaps and safety columns
 ```
 

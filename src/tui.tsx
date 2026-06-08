@@ -412,20 +412,18 @@ function statuslineColumnsBudget(input: {
   sessionID: string;
   terminalColumns: number;
   rightSlotColumns: number;
-  reservePromptLeftColumns: boolean;
 }): number {
   const promptColumns = estimatePromptInnerColumns(input.api, input.sessionID, input.terminalColumns);
-  const leftColumns = input.reservePromptLeftColumns ? estimatePromptLeftColumns(input.api, input.sessionID) : 0;
+  const leftColumns = estimatePromptLeftColumns(input.api, input.sessionID);
   const rightSlotColumns = Math.max(0, Math.ceil(input.rightSlotColumns));
   const rightGap = rightSlotColumns > 0 ? RIGHT_CONTENT_GAP : 0;
-  const promptRowGap = input.reservePromptLeftColumns ? PROMPT_ROW_GAP : 0;
   return Math.max(
     0,
     promptColumns
       - leftColumns
       - rightSlotColumns
       - rightGap
-      - promptRowGap
+      - PROMPT_ROW_GAP
       - STATUSLINE_SAFETY_COLUMNS
   );
 }
@@ -490,8 +488,6 @@ function StatuslineView(props: {
   api: TuiPluginApi;
   sessionID: string;
   rightSlotColumns: number;
-  reservePromptLeftColumns?: boolean;
-  fillWidth?: boolean;
 }): JSX.Element {
   const [parts, setParts] = createSignal<StatuslineDisplayPart[]>([]);
   const [layoutVersion, setLayoutVersion] = createSignal(0);
@@ -502,8 +498,7 @@ function StatuslineView(props: {
       api: props.api,
       sessionID: props.sessionID,
       terminalColumns: dimensions().width,
-      rightSlotColumns: props.rightSlotColumns,
-      reservePromptLeftColumns: props.reservePromptLeftColumns ?? true
+      rightSlotColumns: props.rightSlotColumns
     });
   });
   const displaySegments = createMemo(() => truncateStatuslineSegments(parts(), maxWidth()));
@@ -620,42 +615,20 @@ function StatuslineView(props: {
 
   return (
     <Show when={displaySegments().length}>
-      <Show
-        when={props.fillWidth}
-        fallback={
-          <box width={displayWidth()} flexShrink={0} flexDirection="row">
-            <For each={displaySegments()}>
-              {(segment) => (
-                <text
-                  fg={statuslineSegmentColor(props.api.theme.current, segment)}
-                  wrapMode="none"
-                  width={displayColumns(segment.text)}
-                  flexShrink={0}
-                >
-                  {segment.text}
-                </text>
-              )}
-            </For>
-          </box>
-        }
-      >
-        <box width="100%" flexShrink={0} flexDirection="row" justifyContent="flex-end">
-          <box width={displayWidth()} flexShrink={0} flexDirection="row">
-            <For each={displaySegments()}>
-              {(segment) => (
-                <text
-                  fg={statuslineSegmentColor(props.api.theme.current, segment)}
-                  wrapMode="none"
-                  width={displayColumns(segment.text)}
-                  flexShrink={0}
-                >
-                  {segment.text}
-                </text>
-              )}
-            </For>
-          </box>
-        </box>
-      </Show>
+      <box width={displayWidth()} flexShrink={0} flexDirection="row">
+        <For each={displaySegments()}>
+          {(segment) => (
+            <text
+              fg={statuslineSegmentColor(props.api.theme.current, segment)}
+              wrapMode="none"
+              width={displayColumns(segment.text)}
+              flexShrink={0}
+            >
+              {segment.text}
+            </text>
+          )}
+        </For>
+      </box>
     </Show>
   );
 }
@@ -686,7 +659,19 @@ function PromptRightContent(props: { api: TuiPluginApi; sessionID: string }): JS
   );
 }
 
-function PromptWithInlineStatusline(props: { api: TuiPluginApi; prompt: PromptSlotProps }): JSX.Element {
+function PromptStatuslineOnlyRightContent(props: { api: TuiPluginApi; sessionID: string }): JSX.Element {
+  return (
+    <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
+      <StatuslineView api={props.api} sessionID={props.sessionID} rightSlotColumns={0} />
+    </box>
+  );
+}
+
+function PromptWithInlineStatusline(props: {
+  api: TuiPluginApi;
+  prompt: PromptSlotProps;
+  preserveRightSlot: boolean;
+}): JSX.Element {
   return (
     <props.api.ui.Prompt
       sessionID={props.prompt.session_id}
@@ -694,29 +679,12 @@ function PromptWithInlineStatusline(props: { api: TuiPluginApi; prompt: PromptSl
       disabled={props.prompt.disabled}
       onSubmit={props.prompt.on_submit}
       ref={props.prompt.ref as any}
-      right={<PromptRightContent api={props.api} sessionID={props.prompt.session_id} />}
+      right={
+        props.preserveRightSlot
+          ? <PromptRightContent api={props.api} sessionID={props.prompt.session_id} />
+          : <PromptStatuslineOnlyRightContent api={props.api} sessionID={props.prompt.session_id} />
+      }
     />
-  );
-}
-
-function PromptWithStatuslineBelow(props: { api: TuiPluginApi; prompt: PromptSlotProps }): JSX.Element {
-  return (
-    <box gap={0}>
-      <props.api.ui.Prompt
-        sessionID={props.prompt.session_id}
-        visible={props.prompt.visible}
-        disabled={props.prompt.disabled}
-        onSubmit={props.prompt.on_submit}
-        ref={props.prompt.ref as any}
-      />
-      <StatuslineView
-        api={props.api}
-        sessionID={props.prompt.session_id}
-        rightSlotColumns={0}
-        reservePromptLeftColumns={false}
-        fillWidth
-      />
-    </box>
   );
 }
 
@@ -725,9 +693,13 @@ const tui: TuiPlugin = async (api) => {
     order: STATUSLINE_SLOT_ORDER,
     slots: {
       session_prompt(_ctx, props: PromptSlotProps) {
-        return process.platform === "win32"
-          ? <PromptWithStatuslineBelow api={api} prompt={props} />
-          : <PromptWithInlineStatusline api={api} prompt={props} />;
+        return (
+          <PromptWithInlineStatusline
+            api={api}
+            prompt={props}
+            preserveRightSlot={process.platform !== "win32"}
+          />
+        );
       }
     }
   });

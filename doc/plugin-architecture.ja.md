@@ -38,7 +38,7 @@ tests/
 | Area | Implementation |
 | --- | --- |
 | Linux/macOS の `session_prompt` slot | `api.ui.Prompt` を wrap し、host props を保持しながら prompt の `right` node に statusline fields を注入 |
-| Windows の `session_prompt` slot | `api.ui.Prompt` を wrap し、prompt の下に右寄せの独立した statusline 行を表示 |
+| Windows の `session_prompt` slot | `api.ui.Prompt` を wrap し、`session_prompt_right` を登録または読み込まずに prompt の `right` node に statusline fields を注入 |
 | `/usage` command | `api.keymap.registerLayer`, `slashName: "usage"` |
 | `/statusline` command | `api.keymap.registerLayer`, `slashName: "statusline"` |
 | usage close binding | usage dialog が開いている間の dialog-layer `return` binding |
@@ -147,12 +147,12 @@ plugin は次と共存する必要があります。
 - terminal width changes
 - optional OpenCode sidebar width
 
-Linux/macOS では `PromptRightContent` が `onSizeChange` で元の right slot width を測定します。Windows では statusline を prompt の下に表示し、native prompt row を共有しないことで、新しい opencode build で stall しうる right-slot layout path を避けます。`StatuslineView` は次の budget を計算します。
+Linux/macOS では `PromptRightContent` が `onSizeChange` で元の right slot width を測定します。Windows では prompt right content にこの plugin の statusline だけを入れ、`api.ui.Slot name="session_prompt_right"` を意図的に描画しないことで、新しい opencode build で stall しうる right-slot registration path を避けます。`StatuslineView` は次の budget を計算します。
 
 ```text
 estimated prompt inner width
-- estimated native left model row width when sharing the prompt row
-- measured native right-side prompt width when sharing the prompt row
+- estimated native left model row width
+- measured native right-side prompt width on Linux/macOS
 - row gaps and safety columns
 ```
 
