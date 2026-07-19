@@ -1,4 +1,12 @@
-import { resolveApiCredential, resolveOAuthCredential, describeCredentialSource, type CredentialSource } from "./auth.js";
+import fs from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  getAuthJsonPath,
+  resolveApiCredential,
+  resolveOAuthCredential,
+  describeCredentialSource,
+  type CredentialSource
+} from "./auth.js";
 import {
   clampPercent,
   formatMoney,
@@ -59,6 +67,7 @@ type ProviderKind =
   | "zai"
   | "zhipu"
   | "kimi"
+  | "minimax"
   | "minimax-cn"
   | "xiaomi-mimo"
   | "deepseek"
@@ -74,6 +83,23 @@ const CACHE_TTL_MS = 60_000;
 const CACHE_STALE_TTL_MS = 10 * 60_000;
 const cache = new Map<string, { expiresAt: number; staleUntil: number; report: UsageReport }>();
 const inflight = new Map<string, Promise<UsageReport>>();
+const CREDENTIAL_ENV_KEYS = [
+  "ZAI_API_KEY",
+  "ZAI_CODING_PLAN_API_KEY",
+  "ZHIPU_API_KEY",
+  "ZHIPU_CODING_PLAN_API_KEY",
+  "KIMI_API_KEY",
+  "KIMI_CODE_API_KEY",
+  "MINIMAX_API_KEY",
+  "MINIMAX_CODING_PLAN_API_KEY",
+  "MINIMAX_CHINA_CODING_PLAN_API_KEY",
+  "XIAOMI_MIMO_SESSION_COOKIE",
+  "DEEPSEEK_API_KEY",
+  "OPENROUTER_API_KEY",
+  "OPENCODE_GO_WORKSPACE_ID",
+  "OPENCODE_GO_AUTH_COOKIE"
+] as const;
+let authFileFingerprintCache: { statKey: string; value: string } | undefined;
 
 export type CollectProviderUsageInput = {
   providerID: string;
@@ -122,7 +148,8 @@ function providerKind(providerID: string): ProviderKind {
   if (["zai", "zai-coding-plan"].includes(id)) return "zai";
   if (["zhipu", "zhipuai", "zhipu-coding-plan", "zhipuai-coding-plan"].includes(id)) return "zhipu";
   if (["kimi", "kimi-code", "kimi-for-coding"].includes(id)) return "kimi";
-  if (["minimax", "minimax-china-coding-plan", "minimax-cn-coding-plan"].includes(id)) return "minimax-cn";
+  if (["minimax", "minimax-coding-plan"].includes(id)) return "minimax";
+  if (["minimax-cn", "minimax-china", "minimax-china-coding-plan", "minimax-cn-coding-plan"].includes(id)) return "minimax-cn";
   if ([
     "mimo",
     "mimo-token-plan",
@@ -145,25 +172,87 @@ function providerKind(providerID: string): ProviderKind {
   return "unknown";
 }
 
-function providerUsageCacheKey(input: Pick<CollectProviderUsageInput, "providerID" | "modelID">): string {
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 20);
+}
+
+function serializeForFingerprint(value: unknown): string {
+  const seen = new WeakSet<object>();
+  try {
+    return JSON.stringify(value, (_key, item: unknown) => {
+      if (typeof item === "bigint") return `${item}n`;
+      if (typeof item === "function" || typeof item === "symbol") return String(item);
+      if (item && typeof item === "object") {
+        if (seen.has(item)) return "[Circular]";
+        seen.add(item);
+      }
+      return item;
+    }) ?? "";
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
+}
+
+function authFileFingerprint(): string {
+  const file = getAuthJsonPath();
+  try {
+    const stat = fs.statSync(file);
+    const statKey = `${file}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
+    if (authFileFingerprintCache?.statKey === statKey) return authFileFingerprintCache.value;
+    const value = hashText(fs.readFileSync(file, "utf8"));
+    authFileFingerprintCache = { statKey, value };
+    return value;
+  } catch {
+    return `missing:${file}`;
+  }
+}
+
+function credentialScope(input: CollectProviderUsageInput): string {
+  const configProviders = isRecord(input.config) && isRecord(input.config.provider)
+    ? input.config.provider
+    : undefined;
+  return hashText(JSON.stringify({
+    auth: authFileFingerprint(),
+    env: CREDENTIAL_ENV_KEYS.map((key) => [key, process.env[key] ?? ""]),
+    config: serializeForFingerprint(configProviders),
+    providerKey: input.providerInfo?.key ?? "",
+    providerOptions: serializeForFingerprint(input.providerInfo?.options ?? {})
+  }));
+}
+
+function providerUsageCacheKey(input: CollectProviderUsageInput): string {
   const kind = providerKind(input.providerID);
-  return `${kind}:${input.providerID}:${input.modelID ?? ""}`;
+  const providerScope = kind === "unknown" ? input.providerID.toLowerCase() : "";
+  const modelScope = kind === "minimax" || kind === "minimax-cn" ? input.modelID ?? "" : "";
+  return `${kind}:${providerScope}:${modelScope}:${credentialScope(input)}`;
+}
+
+function reportForInput(report: UsageReport, input: CollectProviderUsageInput): UsageReport {
+  return {
+    ...report,
+    providerID: input.providerID,
+    providerName: input.providerName ?? report.providerName,
+    modelID: input.modelID
+  };
 }
 
 export function readCachedProviderUsage(
-  input: Pick<CollectProviderUsageInput, "providerID" | "modelID">,
+  input: CollectProviderUsageInput,
   options: { allowStale?: boolean } = {}
 ): UsageReport | undefined {
   const cached = cache.get(providerUsageCacheKey(input));
   if (!cached) return undefined;
   const now = Date.now();
-  if (cached.expiresAt > now || (options.allowStale && cached.staleUntil > now)) return cached.report;
+  if (cached.expiresAt > now || (options.allowStale && cached.staleUntil > now)) {
+    return reportForInput(cached.report, input);
+  }
   return undefined;
 }
 
 export function clearProviderUsageCache(): void {
   cache.clear();
   inflight.clear();
+  authFileFingerprintCache = undefined;
 }
 
 function credentialMissing(providerID: string, providerName: string | undefined, modelID: string | undefined): UsageReport {
@@ -175,33 +264,52 @@ function credentialMissing(providerID: string, providerName: string | undefined,
   });
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Response> {
+async function fetchBodyWithTimeout<Value>(
+  url: string,
+  init: RequestInit,
+  read: (response: Response) => Promise<Value>,
+  timeoutMs: number
+): Promise<Value> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, controller.signal])
+    : controller.signal;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`Request timed out after ${timeoutMs}ms`);
+      reject(error);
+      controller.abort(error);
+    }, timeoutMs);
+  });
+  const request = (async () => {
+    const response = await fetch(url, { ...init, signal });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`HTTP ${response.status}: ${truncateText(body, 160)}`);
+    }
+    return read(response);
+  })();
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await Promise.race([request, timeout]);
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }
 
-async function fetchJson(url: string, init: RequestInit = {}): Promise<unknown> {
-  const response = await fetchWithTimeout(url, init);
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`HTTP ${response.status}: ${truncateText(body, 160)}`);
-  }
-  return response.json();
+export function fetchJsonWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS
+): Promise<unknown> {
+  return fetchBodyWithTimeout(url, init, (response) => response.json(), timeoutMs);
 }
 
 async function fetchText(url: string, init: RequestInit = {}): Promise<string> {
-  const response = await fetchWithTimeout(url, init);
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`HTTP ${response.status}: ${truncateText(body, 160)}`);
-  }
-  return response.text();
+  return fetchBodyWithTimeout(url, init, (response) => response.text(), DEFAULT_TIMEOUT_MS);
 }
+
+const fetchJson = fetchJsonWithTimeout;
 
 function windowFromUsage(input: {
   key: UsageWindowKey;
@@ -447,24 +555,34 @@ async function queryKimi(input: {
   }
 }
 
-async function queryMiniMaxCN(input: {
+async function queryMiniMax(input: {
   providerID: string;
   providerName?: string;
   modelID?: string;
   config?: unknown;
   providerInfo?: ProviderInfoLike;
+  china: boolean;
 }): Promise<UsageReport> {
   const credential = resolveApiCredential({
-    env: ["MINIMAX_CHINA_CODING_PLAN_API_KEY"],
+    env: input.china
+      ? ["MINIMAX_CHINA_CODING_PLAN_API_KEY"]
+      : ["MINIMAX_CODING_PLAN_API_KEY", "MINIMAX_API_KEY"],
     config: input.config,
-    providerIDs: ["minimax-china-coding-plan", "minimax-cn-coding-plan", "minimax"],
-    authKeys: ["minimax-china-coding-plan", "minimax-cn-coding-plan"],
+    providerIDs: input.china
+      ? ["minimax-china-coding-plan", "minimax-cn-coding-plan", "minimax-cn", "minimax-china"]
+      : ["minimax-coding-plan", "minimax"],
+    authKeys: input.china
+      ? ["minimax-china-coding-plan", "minimax-cn-coding-plan"]
+      : ["minimax-coding-plan", "minimax"],
     providerInfo: input.providerInfo
   });
   if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
 
   try {
-    const payload = await fetchJson("https://api.minimaxi.com/v1/token_plan/remains", {
+    const url = input.china
+      ? "https://api.minimaxi.com/v1/token_plan/remains"
+      : "https://api.minimax.io/v1/api/openplatform/coding_plan/remains";
+    const payload = await fetchJson(url, {
       headers: { Authorization: `Bearer ${credential.token}`, "User-Agent": USER_AGENT }
     });
     if (!isRecord(payload)) throw new Error("Unexpected response shape");
@@ -479,7 +597,7 @@ async function queryMiniMaxCN(input: {
     if (!selected) throw new Error("No model quota rows found");
 
     const report = baseReport({ ...input, auth: credential.source });
-    report.plan = "MiniMax coding plan";
+    report.plan = input.china ? "MiniMax coding plan (China)" : "MiniMax coding plan";
     const modelName = toNonEmptyString(selected.model_name);
     if (modelName) report.items.push({ label: "Quota model", value: modelName });
     report.windows.push(windowFromUsage({
@@ -768,9 +886,12 @@ async function queryOpenAI(input: {
     if (!isRecord(payload)) throw new Error("Unexpected response shape");
     const report = baseReport({ ...input, auth: credential.source });
     const planType = toNonEmptyString(payload.plan_type);
-    report.plan = planType?.toLowerCase().includes("pro")
+    const normalizedPlan = planType?.toLowerCase();
+    report.plan = normalizedPlan === "team" || normalizedPlan === "business"
+      ? "ChatGPT Business"
+      : normalizedPlan?.includes("pro")
       ? "ChatGPT Pro"
-      : planType?.toLowerCase().includes("plus")
+      : normalizedPlan?.includes("plus")
         ? "ChatGPT Plus"
         : (planType ?? "ChatGPT");
     const email = openAIEmail(credential.access);
@@ -779,20 +900,25 @@ async function queryOpenAI(input: {
     const primary = isRecord(rateLimit.primary_window) ? rateLimit.primary_window : undefined;
     const secondary = isRecord(rateLimit.secondary_window) ? rateLimit.secondary_window : undefined;
     if (typeof rateLimit.limit_reached === "boolean") report.items.push({ label: "Limit reached", value: String(rateLimit.limit_reached) });
-    if (primary) {
+    for (const [window, fallbackKey] of [[primary, "fiveHour"], [secondary, "weekly"]] as const) {
+      if (!window) continue;
+      const duration = toFiniteNumber(window.limit_window_seconds);
+      const key: UsageWindowKey | undefined = duration === undefined
+        ? fallbackKey
+        : duration === 18_000
+          ? "fiveHour"
+          : duration === 604_800
+            ? "weekly"
+            : duration === 2_628_000
+              ? "monthly"
+              : undefined;
+      if (!key) continue;
+      const label = key === "fiveHour" ? "5h quota" : key === "weekly" ? "Weekly quota" : "Monthly quota";
       report.windows.push(windowFromUsage({
-        key: "fiveHour",
-        label: "5h quota",
-        usedPercent: primary.used_percent,
-        resetAtMs: resetAtFromUnixSeconds(primary.reset_at) ?? resetAtFromSeconds(primary.reset_after_seconds)
-      }));
-    }
-    if (secondary) {
-      report.windows.push(windowFromUsage({
-        key: "weekly",
-        label: "Weekly quota",
-        usedPercent: secondary.used_percent,
-        resetAtMs: resetAtFromUnixSeconds(secondary.reset_at) ?? resetAtFromSeconds(secondary.reset_after_seconds)
+        key,
+        label,
+        usedPercent: window.used_percent,
+        resetAtMs: resetAtFromUnixSeconds(window.reset_at) ?? resetAtFromSeconds(window.reset_after_seconds)
       }));
     }
     const codeReviewRoot = isRecord(payload.code_review_rate_limit) ? payload.code_review_rate_limit : {};
@@ -828,8 +954,8 @@ export async function collectProviderUsage(input: CollectProviderUsageInput): Pr
   const cached = readCachedProviderUsage(input);
   if (!input.force && cached) return cached;
 
-  const pending = !input.force ? inflight.get(cacheKey) : undefined;
-  if (pending) return pending;
+  const pending = inflight.get(cacheKey);
+  if (pending) return reportForInput(await pending, input);
 
   const promise = (async () => {
     let report: UsageReport;
@@ -843,8 +969,11 @@ export async function collectProviderUsage(input: CollectProviderUsageInput): Pr
       case "kimi":
         report = await queryKimi(input);
         break;
+      case "minimax":
+        report = await queryMiniMax({ ...input, china: false });
+        break;
       case "minimax-cn":
-        report = await queryMiniMaxCN(input);
+        report = await queryMiniMax({ ...input, china: true });
         break;
       case "xiaomi-mimo":
         report = await queryXiaomiMiMo(input);
@@ -874,9 +1003,9 @@ export async function collectProviderUsage(input: CollectProviderUsageInput): Pr
     return report;
   })();
 
-  if (!input.force) inflight.set(cacheKey, promise);
+  inflight.set(cacheKey, promise);
   try {
-    return await promise;
+    return reportForInput(await promise, input);
   } finally {
     if (inflight.get(cacheKey) === promise) inflight.delete(cacheKey);
   }

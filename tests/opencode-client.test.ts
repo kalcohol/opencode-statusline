@@ -45,6 +45,21 @@ describe("resolveActiveModel", () => {
     ).resolves.toEqual({ providerID: "openrouter", modelID: "anthropic/claude-sonnet-4" });
   });
 
+  it("prefers the authoritative TUI state directory over a guessed environment path", async () => {
+    const guessedDir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-statusline-guessed-"));
+    process.env.OPENCODE_STATUSLINE_STATE_DIR = guessedDir;
+    writeModelState([{ providerID: "openrouter", modelID: "anthropic/claude-sonnet-4" }]);
+
+    await expect(resolveActiveModel({
+      client: {},
+      sessionID: "ses_1",
+      stateDir,
+      providers: [{ id: "openrouter", models: { "anthropic/claude-sonnet-4": {} } }]
+    })).resolves.toEqual({ providerID: "openrouter", modelID: "anthropic/claude-sonnet-4" });
+
+    fs.rmSync(guessedDir, { recursive: true, force: true });
+  });
+
   it("keeps an explicit command model first", async () => {
     writeModelState([{ providerID: "openrouter", modelID: "anthropic/claude-sonnet-4" }]);
 

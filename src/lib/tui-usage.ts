@@ -7,6 +7,7 @@ type TuiUsageApiLike = {
   state: {
     config: unknown;
     provider: ReadonlyArray<ProviderInfoLike>;
+    path?: { state?: string };
     session: {
       get: (sessionID: string) => unknown;
       messages: (sessionID: string) => ReadonlyArray<unknown>;
@@ -27,7 +28,8 @@ export async function buildTuiUsageText(api: TuiUsageApiLike, sessionID: string)
     client,
     sessionID,
     config,
-    providers: api.state.provider
+    providers: api.state.provider,
+    stateDir: api.state.path?.state
   });
   if (!model) return formatUsageReport(undefined);
 

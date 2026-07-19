@@ -37,8 +37,7 @@ tests/
 
 | Area | Implementation |
 | --- | --- |
-| `session_prompt` slot on Linux/macOS | Wraps `api.ui.Prompt`, preserves host props, and injects statusline fields into the prompt `right` node |
-| `session_prompt` slot on Windows | Wraps `api.ui.Prompt` and injects statusline fields into the prompt `right` node without registering or reading `session_prompt_right` |
+| `session_prompt` slot on all platforms | Wraps `api.ui.Prompt`, preserves host props, injects statusline fields into the prompt `right` node, and retains `session_prompt_right` content |
 | `/usage` command | `api.keymap.registerLayer`, `slashName: "usage"` |
 | `/statusline` command | `api.keymap.registerLayer`, `slashName: "statusline"` |
 | usage close binding | Dialog-layer `return` binding while the usage dialog is open |
@@ -113,13 +112,13 @@ Unavailable values are omitted. For example, OpenRouter has balance/usage data b
 
 `provider_balance` reuses `UsageReport.balances`, the same normalized rows shown by `/usage`. It prefers labels containing `remaining`, then `balance`, then `credit`, and renders only numeric money-like values. Pure subscription quota providers with no balance row omit the field.
 
-`git_diff_stats` uses local git commands only when the field is selected. It sums `git diff --no-ext-diff --numstat --` and `git diff --cached --no-ext-diff --numstat --` for tracked file changes relative to HEAD, skips binary rows, and does not include untracked files. Results are cached briefly to avoid running git on every streaming delta; `session.updated` clears the cache so the value refreshes when a session finishes.
+`git_diff_stats` uses `git diff HEAD --no-ext-diff --numstat --` only when selected. This counts each tracked change once even when a file has staged and unstaged edits, skips binary rows, and excludes untracked files. Results are cached briefly; `session.updated` clears the cache.
 
-`session_io`, `session_total`, and `session_cost` include child-session messages when OpenCode exposes those child sessions. `session_total` uses OpenCode's explicit total token value when present; otherwise it sums input, output, reasoning, and cache tokens.
+`session_io`, `session_total`, and `session_cost` include descendant-session messages when OpenCode exposes them. Discovery is cycle-safe and bounded to 24 sessions, four levels, one second, and four concurrent SDK calls. `session_total` uses OpenCode's explicit total token value when present; otherwise it sums input, output, reasoning, and cache tokens.
 
-`session_cost` prefers OpenCode's recorded assistant message cost. If recorded cost is absent, it estimates an equivalent cost from model catalog pricing and input/output/cache token counts. This is useful for subscription or coding-plan providers, but `eq $...` should be read as a per-token equivalent estimate, not necessarily actual billing.
+`session_cost` prefers OpenCode's recorded assistant message cost. If recorded cost is absent, it estimates an equivalent cost from current object-shaped model pricing, context tiers, and input/output/reasoning/cache token counts. This is useful for subscription or coding-plan providers, but `eq $...` is not necessarily actual billing.
 
-`generation_metrics` is approximate because OpenCode exposes message and part timestamps rather than a provider-native TTFT field. The plugin computes TTFT from assistant message creation to the first text/reasoning/tool part start, and computes generation speed from output tokens over text/reasoning part duration. While a newer response is still incomplete, it keeps showing the latest complete metric instead of hiding the field.
+`generation_metrics` is approximate because OpenCode exposes message and part timestamps rather than provider-native timing. TTFT runs from assistant creation to the first text/reasoning part. Generation speed uses output plus reasoning tokens over the union of text/reasoning intervals; tool execution timestamps are excluded and tool-only messages do not produce a metric.
 
 TUI rendering uses colored segments:
 
@@ -137,7 +136,7 @@ TUI rendering uses colored segments:
 
 ## Prompt Width Strategy
 
-Prompt integration is platform-specific. On Linux/macOS, the plugin wraps `session_prompt` and keeps the original `session_prompt_right` slot inside the prompt `right` node. On Windows, it only registers `session_prompt_right` so native prompt status rendering stays owned by OpenCode.
+Prompt integration uses the same precompiled OpenTUI 0.4 path on every platform. The plugin wraps `session_prompt` and keeps the original `session_prompt_right` slot inside the prompt `right` node.
 
 The plugin must coexist with:
 
@@ -147,12 +146,12 @@ The plugin must coexist with:
 - terminal width changes
 - optional OpenCode sidebar width
 
-`PromptRightContent` measures the original right slot width via `onSizeChange` on Linux/macOS. On Windows, the prompt right content contains only this plugin's statusline and deliberately does not render `api.ui.Slot name="session_prompt_right"`, avoiding the right-slot registration path that can stall on newer opencode builds. `StatuslineView` computes its budget as:
+`PromptRightContent` measures the original right slot width via `onSizeChange`. `StatuslineView` also reserves the host `auto` label and latest model variant, then computes its budget as:
 
 ```text
 estimated prompt inner width
 - estimated native left model row width
-- measured native right-side prompt width on Linux/macOS
+- measured native right-side prompt width
 - row gaps and safety columns
 ```
 
@@ -172,7 +171,7 @@ Inputs may come from:
 | session model | `session.model.providerID` / `session.model.modelID` |
 | latest message model | fallback from recent messages |
 
-Recent model state is useful after model switching in the TUI. To avoid provider pressure, the statusline polls only the local `model.json` mtime/signature every 2 seconds. It performs provider quota collection only when a full statusline refresh is needed and the selected fields require quota data.
+Recent model state is useful after model switching in the TUI. The TUI-provided `api.state.path.state` is authoritative; environment/XDG resolution is only a fallback. The statusline polls only the local `model.json` signature every 2 seconds and queries providers only when selected fields require quota data.
 
 Override the state directory with `OPENCODE_STATUSLINE_STATE_DIR`.
 
@@ -192,7 +191,7 @@ Statusline refreshes happen on:
 
 Streaming `message.part.updated` and `message.part.delta` events do not trigger a full statusline rebuild; the next `message.updated` or session event refreshes the final token/context data.
 
-Provider quota collection has a 60 second fresh cache and a 10 minute stale cache in `providers.ts`. Statusline quota rendering first uses cached data, then refreshes with a 2.5 second statusline-side timeout so a slow provider does not stall prompt rendering. Concurrent statusline refreshes share one in-flight provider request. `/usage` intentionally uses `force: true` to fetch fresh data and update the cache.
+Provider quota collection has a credential-scoped 60 second fresh cache and 10 minute stale cache. Network deadlines cover both headers and body parsing. Statusline rendering adds a 2.5 second outer deadline; concurrent refreshes for the same account share one request. `/usage` forces fresh data and guards async results so closing or reopening the dialog cannot apply a stale response.
 
 ## Context Hygiene
 

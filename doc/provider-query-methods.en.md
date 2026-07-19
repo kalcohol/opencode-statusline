@@ -21,9 +21,7 @@ Default `auth.json` locations:
 
 | Platform | Path |
 | --- | --- |
-| Linux | `${XDG_DATA_HOME:-~/.local/share}/opencode/auth.json` |
-| macOS | `~/Library/Application Support/opencode/auth.json` or `~/.local/share/opencode/auth.json` |
-| Windows | `%APPDATA%/opencode/auth.json` or `%LOCALAPPDATA%/opencode/auth.json` |
+| All platforms | `${XDG_DATA_HOME:-~/.local/share}/opencode/auth.json` |
 
 Override with `OPENCODE_AUTH_JSON`.
 
@@ -34,12 +32,13 @@ Override with `OPENCODE_AUTH_JSON`.
 | Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota, time quota |
 | Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota, time quota |
 | Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage window, 5h window when present |
-| MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h quota, weekly quota |
+| MiniMax coding plan | `minimax`, `minimax-coding-plan` | `MINIMAX_CODING_PLAN_API_KEY`, `MINIMAX_API_KEY` | 5h quota, weekly quota |
+| MiniMax CN coding plan | `minimax-cn`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h quota, weekly quota |
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | `XIAOMI_MIMO_SESSION_COOKIE` for usage; `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY` for model calls | plan/compensation/monthly credits quota, credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance, availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label, remaining limit, usage totals |
 | OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h/weekly/monthly dashboard quota |
-| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan, 5h/weekly quota, code review quota, credits |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan, 5h/weekly/monthly quota, code review quota, credits |
 | OpenCode Zen | `opencode` | N/A | recognized, but no public quota API |
 
 Provider IDs are matched case-insensitively.
@@ -145,12 +144,13 @@ Supported response variants:
 
 The parser accepts both top-level `usage` and `data.usage`. It computes used count from `used`, or from `limit - remaining` when only `remaining` exists. A `limits[]` row with `window.duration === 5` and `window.timeUnit` containing `HOUR` is mapped to the 5h quota window.
 
-## MiniMax CN Coding Plan
+## MiniMax Coding Plans
 
-Endpoint:
+Endpoints:
 
 ```text
-GET https://api.minimaxi.com/v1/token_plan/remains
+International: GET https://api.minimax.io/v1/api/openplatform/coding_plan/remains
+China:         GET https://api.minimaxi.com/v1/token_plan/remains
 ```
 
 Headers:
@@ -182,7 +182,7 @@ Response shape:
 }
 ```
 
-The implementation selects the `MiniMax-M*` wildcard row first, then a row matching the current model id, then the first row. The CN endpoint treats `*_usage_count` as used count.
+The generic `minimax` provider uses the international endpoint; only explicit CN aliases use the China endpoint. The implementation selects the `MiniMax-M*` wildcard row first, then a row matching the current model id, then the first row. It treats `*_usage_count` as used count.
 
 | Response fields | Usage window |
 | --- | --- |
@@ -369,11 +369,13 @@ Response shape:
     "limit_reached": false,
     "primary_window": {
       "used_percent": 45,
+      "limit_window_seconds": 18000,
       "reset_after_seconds": 7200,
       "reset_at": 1700000000
     },
     "secondary_window": {
       "used_percent": 20,
+      "limit_window_seconds": 604800,
       "reset_after_seconds": 302400,
       "reset_at": 1700400000
     }
@@ -396,8 +398,7 @@ Mapping:
 
 | Response | Usage window / item |
 | --- | --- |
-| `rate_limit.primary_window` | 5h quota |
-| `rate_limit.secondary_window` | weekly quota |
+| `rate_limit.primary_window` / `secondary_window` | classified by `limit_window_seconds`: 18000 = 5h, 604800 = weekly, 2628000 = monthly |
 | `code_review_rate_limit.primary_window` | code review quota |
 | `credits` | credits balance / unlimited state |
 

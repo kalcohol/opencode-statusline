@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildTuiStatusline, providerBalanceText } from "../src/lib/statusline.js";
+import { buildTuiStatusline, invalidateGitDiffStatsCache, providerBalanceText } from "../src/lib/statusline.js";
 import { buildTuiUsageText } from "../src/lib/tui-usage.js";
 import { clearProviderUsageCache } from "../src/lib/providers.js";
 
@@ -79,7 +79,7 @@ function assistantMessage(
   id: string,
   input: number,
   output: number,
-  extra: { cost?: number; cacheRead?: number; cacheWrite?: number; model?: unknown } = {}
+  extra: { cost?: number; reasoning?: number; cacheRead?: number; cacheWrite?: number; model?: unknown } = {}
 ) {
   return {
     id,
@@ -89,7 +89,7 @@ function assistantMessage(
     tokens: {
       input,
       output,
-      reasoning: 0,
+      reasoning: extra.reasoning ?? 0,
       cache: { read: extra.cacheRead ?? 0, write: extra.cacheWrite ?? 0 }
     }
   };
@@ -319,6 +319,36 @@ describe("buildTuiStatusline", () => {
     await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("+2,-1");
   });
 
+  it("does not double count a line changed in both the index and worktree", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["git_diff_stats"] }));
+    execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir, stdio: "ignore" });
+    fs.writeFileSync(path.join(tempDir, "file.txt"), "original\n");
+    execFileSync("git", ["add", "file.txt"], { cwd: tempDir, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: tempDir, stdio: "ignore" });
+    fs.writeFileSync(path.join(tempDir, "file.txt"), "staged\n");
+    execFileSync("git", ["add", "file.txt"], { cwd: tempDir, stdio: "ignore" });
+    fs.writeFileSync(path.join(tempDir, "file.txt"), "worktree\n");
+
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: tempDir, directory: tempDir },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [],
+          status: () => ({ type: "idle" })
+        }
+      }
+    };
+
+    invalidateGitDiffStatsCache();
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("+1,-1");
+  });
+
   it("renders provider balance from usage balance data", async () => {
     fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["provider_balance"] }));
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
@@ -533,6 +563,64 @@ describe("buildTuiStatusline", () => {
     await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("ttft 600ms gen 40 tok/s");
   });
 
+  it("includes reasoning tokens and excludes tool execution gaps from generation speed", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["generation_metrics"] }));
+    const message = {
+      id: "msg_reasoning",
+      role: "assistant",
+      time: { created: 1_000, completed: 13_000 },
+      tokens: { input: 10, output: 200, reasoning: 800, cache: { read: 0, write: 0 } }
+    };
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [message],
+          status: () => ({ type: "idle" })
+        },
+        part: () => [
+          { id: "reasoning", type: "reasoning", time: { start: 1_500, end: 5_500 } },
+          { id: "tool", type: "tool", state: { time: { start: 5_500, end: 9_500 } } },
+          { id: "text", type: "text", time: { start: 10_000, end: 12_000 }, text: "done" }
+        ]
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("ttft 500ms gen 167 tok/s");
+  });
+
+  it("does not report model generation metrics from tool execution timestamps", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["generation_metrics"] }));
+    const message = {
+      id: "msg_tool",
+      role: "assistant",
+      time: { created: 1_000, completed: 31_000 },
+      tokens: { input: 10, output: 100, reasoning: 0, cache: { read: 0, write: 0 } }
+    };
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [message],
+          status: () => ({ type: "idle" })
+        },
+        part: () => [
+          { id: "tool", type: "tool", state: { time: { start: 2_000, end: 31_000 } } }
+        ]
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("");
+  });
+
   it("uses concise branch, agent, token, and child-session text", async () => {
     fs.writeFileSync(
       process.env.OPENCODE_STATUSLINE_CONFIG!,
@@ -612,6 +700,86 @@ describe("buildTuiStatusline", () => {
     await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("4K in / 6K out | 10K used");
   });
 
+  it("aggregates nested child-session tokens with cycle protection", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_io", "session_total"] }));
+    const messagesBySession: Record<string, unknown[]> = {
+      ses_1: [assistantMessage("msg_parent", 1_024, 1_024)],
+      ses_child: [assistantMessage("msg_child", 2_048, 2_048)],
+      ses_grandchild: [assistantMessage("msg_grandchild", 4_096, 4_096)]
+    };
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: (sessionID: string) => messagesBySession[sessionID] ?? [],
+          status: () => ({ type: "idle" })
+        }
+      },
+      client: {
+        session: {
+          children: async (input: { sessionID?: string }) => {
+            if (input.sessionID === "ses_1") return [{ id: "ses_child" }];
+            if (input.sessionID === "ses_child") return [{ id: "ses_grandchild" }];
+            if (input.sessionID === "ses_grandchild") return [{ id: "ses_1" }];
+            return [];
+          }
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("7K in / 7K out | 14K used");
+  });
+
+  it("bounds descendant and message lookup concurrency", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_total"] }));
+    const childIDs = Array.from({ length: 12 }, (_, index) => `ses_child_${index}`);
+    let activeChildren = 0;
+    let maxActiveChildren = 0;
+    let activeMessages = 0;
+    let maxActiveMessages = 0;
+    const delay = () => new Promise((resolve) => setTimeout(resolve, 5));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{ id: "openrouter", name: "OpenRouter", models: { "model-a": {} } }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: (sessionID: string) => sessionID === "ses_1" ? [assistantMessage("msg_parent", 100, 100)] : [],
+          status: () => ({ type: "idle" })
+        }
+      },
+      client: {
+        session: {
+          children: async (input: { sessionID?: string }) => {
+            if (input.sessionID === "ses_1") return childIDs.map((id) => ({ id }));
+            activeChildren += 1;
+            maxActiveChildren = Math.max(maxActiveChildren, activeChildren);
+            await delay();
+            activeChildren -= 1;
+            return [];
+          },
+          messages: async (input: { sessionID?: string }) => {
+            activeMessages += 1;
+            maxActiveMessages = Math.max(maxActiveMessages, activeMessages);
+            await delay();
+            activeMessages -= 1;
+            return { data: [assistantMessage(`msg_${input.sessionID}`, 100, 100)] };
+          }
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toContain("used");
+    expect(maxActiveChildren).toBe(4);
+    expect(maxActiveMessages).toBe(4);
+  });
+
   it("renders recorded session cost including child sessions", async () => {
     fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_cost"] }));
     const messagesBySession: Record<string, unknown[]> = {
@@ -650,7 +818,7 @@ describe("buildTuiStatusline", () => {
           name: "OpenRouter",
           models: {
             "model-a": {
-              cost: [{ input: 10, output: 20, cache: { read: 1, write: 5 } }]
+              cost: { input: 10, output: 20, cache: { read: 1, write: 5 } }
             }
           }
         }],
@@ -658,13 +826,92 @@ describe("buildTuiStatusline", () => {
         vcs: undefined,
         session: {
           get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
-          messages: () => [assistantMessage("msg_parent", 2_000, 1_000, { cacheRead: 1_000 })],
+          messages: () => [assistantMessage("msg_parent", 5_000, 1_000, { reasoning: 1_000, cacheRead: 1_000 })],
           status: () => ({ type: "idle" })
         }
       }
     };
 
-    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("eq $0.03");
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("eq $0.09");
+  });
+
+  it("selects model pricing tiers from the current OpenCode cost shape", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_cost"] }));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{
+          id: "openrouter",
+          name: "OpenRouter",
+          models: {
+            "model-a": {
+              cost: {
+                input: 10,
+                output: 20,
+                cache: { read: 1, write: 5 },
+                tiers: [{
+                  input: 30,
+                  output: 60,
+                  cache: { read: 3, write: 15 },
+                  tier: { type: "context", size: 3_000 }
+                }]
+              }
+            }
+          }
+        }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [assistantMessage("msg_parent", 2_000, 1_000, { cacheRead: 1_001 })],
+          status: () => ({ type: "idle" })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("eq $0.12");
+  });
+
+  it("prefers a matching context tier before experimental over-200K pricing", async () => {
+    fs.writeFileSync(process.env.OPENCODE_STATUSLINE_CONFIG!, JSON.stringify({ fields: ["session_cost"] }));
+    const api = {
+      state: {
+        config: { model: "openrouter/model-a" },
+        provider: [{
+          id: "openrouter",
+          name: "OpenRouter",
+          models: {
+            "model-a": {
+              cost: {
+                input: 1,
+                output: 1,
+                cache: { read: 1, write: 1 },
+                tiers: [{
+                  input: 10,
+                  output: 10,
+                  cache: { read: 10, write: 10 },
+                  tier: { type: "context", size: 100_000 }
+                }],
+                experimentalOver200K: {
+                  input: 100,
+                  output: 100,
+                  cache: { read: 100, write: 100 }
+                }
+              }
+            }
+          }
+        }],
+        path: { worktree: "", directory: "" },
+        vcs: undefined,
+        session: {
+          get: () => ({ model: { providerID: "openrouter", id: "model-a" } }),
+          messages: () => [assistantMessage("msg_parent", 250_001, 0)],
+          status: () => ({ type: "idle" })
+        }
+      }
+    };
+
+    await expect(buildTuiStatusline(api as any, "ses_1")).resolves.toBe("eq $2.50");
   });
 
   it("omits subagent status when all child sessions are idle", async () => {

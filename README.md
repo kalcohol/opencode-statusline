@@ -135,15 +135,15 @@ OpenCode 会从当前项目目录向上查找 `tui.json(c)` 和 `opencode.json(c
 | Context remaining | 模型上下文上限减去当前上下文估算 |
 | Context length | 当前模型上下文上限 |
 | Context used/total | 紧凑的已用/总上下文显示 |
-| TTFT/speed | 近似首 token 延迟和输出 token 生成速度；新回复未完成时保留上一条完整指标 |
+| TTFT/speed | 到首个 text/reasoning 输出的近似延迟，以及 output+reasoning token 生成速度；tool 执行时间不计入 |
 | Subagent status | 活跃 subagent 或 child-session 状态；idle/completed 的 child 会被省略 |
 | Main agent status | 当前主 session 状态，不带 `agent` 前缀；瞬时 `queued`/`pending` 会省略 |
 | 5h quota | provider 5h quota 使用百分比，有数据时显示 |
 | Weekly quota | provider weekly quota 使用百分比，有数据时显示 |
 | Provider balance | provider 返回的预付费余额或 remaining limit，格式为 `bal $12.34` |
-| Session input/output tokens | 当前 session 和 child-session 累计输入/输出 token，格式为 `<input> in / <output> out` |
-| Session total tokens | 当前 session 和 child-session 累计总 token，格式为 `<total> used`；OpenCode 暴露 reasoning/cache token 时会计入 |
-| Session cost | 当前 session 和 child-session 累计成本，格式为 `cost $0.02`；按模型价格估算时显示为 `eq $0.02` |
+| Session input/output tokens | 当前 session 和嵌套 descendant-session 累计输入/输出 token，格式为 `<input> in / <output> out` |
+| Session total tokens | 当前 session 和嵌套 descendant-session 累计总 token，格式为 `<total> used`；reasoning/cache token 会计入 |
+| Session cost | 当前 session 和嵌套 descendant-session 累计成本，格式为 `cost $0.02`；按模型价格估算时显示为 `eq $0.02` |
 
 没有的数据会自动省略。例如 OpenRouter 有 balance 和 usage totals，但没有 coding plan 意义上的 5h subscription quota window，因此不会显示 `5h quota`。
 
@@ -151,11 +151,11 @@ OpenCode 会从当前项目目录向上查找 `tui.json(c)` 和 `opencode.json(c
 
 Quota/balance 字段会复用 provider usage 缓存；`/usage` 手动刷新后，statusline 即使遇到短暂 `queued`/`pending` 或正在 busy，也会优先显示已有缓存，而不是把字段清空。
 
-`Git diff stats` 只读取本地 git 工作树，使用 `git diff --numstat` 和 `git diff --cached --numstat` 汇总 tracked 文件相对 HEAD 的变化；未跟踪文件和二进制文件不会计入。该字段随 statusline 刷新重算，并在 session 更新时清除短缓存，避免流式输出期间频繁执行 git。
+`Git diff stats` 只读取本地 git 工作树，使用一次 `git diff HEAD --numstat` 统计 tracked 文件，避免 staged/unstaged 重复计数；未跟踪文件和二进制文件不会计入。
 
 对于订阅制或 coding plan provider，`Session cost` 可能只是按 token 单价折算的等价估算，不一定代表真实扣费。它优先使用 OpenCode 记录在 message 上的 cost；没有记录时才回退到模型 catalog pricing。
 
-Statusline 始终注册 `session_prompt`。Linux/macOS 会包装 `api.ui.Prompt` 并保留原有 `session_prompt_right` 内容，以便测量右侧宽度；Windows 会包装原生 Prompt，并把 statusline 放进 Prompt 的 `right` 内容，但不再注册或嵌套读取 `session_prompt_right`，避开新版 opencode 的 right-slot 注册路径。两种路径都会动态截断本插件字段，避免换行挤坏 prompt 布局。
+Statusline 在所有平台使用同一套预编译 OpenTUI 0.4 路径：包装 `session_prompt`，把字段放入 Prompt 的 `right` 内容，并保留已有 `session_prompt_right` 内容。字段会按真实终端列宽动态截断，避免换行挤坏 prompt 布局。
 
 ## 支持的 Providers
 
@@ -166,12 +166,13 @@ Statusline 始终注册 `session_prompt`。Linux/macOS 会包装 `api.ui.Prompt`
 | Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota，time quota |
 | Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota，time quota |
 | Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage windows，包括存在时的 5h window |
-| MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h 和 weekly token quota |
+| MiniMax coding plan | `minimax`, `minimax-coding-plan` | `MINIMAX_CODING_PLAN_API_KEY`, `MINIMAX_API_KEY` | 国际站 5h 和 weekly token quota |
+| MiniMax CN coding plan | `minimax-cn`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 中国区 5h 和 weekly token quota |
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | 模型调用用 `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY`；usage 需要 `XIAOMI_MIMO_SESSION_COOKIE` | plan/compensation/monthly credits quota，credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance 和 availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、total limit、usage totals |
 | OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h、weekly、monthly dashboard quota |
-| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly quota、code review quota、credits |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly/monthly quota、code review quota、credits |
 
 API key 类 provider 按以下顺序解析凭据：
 
@@ -231,7 +232,7 @@ mkdir -p .tmp
 TMPDIR=$PWD/.tmp npm test
 ```
 
-OpenCode 从 `dist/tui.tsx` 解析 TUI entry，因此改源码后要先运行 `npm run build` 再在 TUI 中测试。
+OpenCode 从预编译的 `dist/tui.js` 解析 TUI entry，因此改源码后要先运行 `npm run build` 再在 TUI 中测试。
 
 源码结构：
 

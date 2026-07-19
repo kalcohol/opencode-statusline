@@ -44,39 +44,23 @@ function firstExistingPath(candidates: string[]): string {
 export function getOpencodeDataDir(): string {
   if (process.env.OPENCODE_STATUSLINE_DATA_DIR) return process.env.OPENCODE_STATUSLINE_DATA_DIR;
   if (process.env.XDG_DATA_HOME) return path.join(process.env.XDG_DATA_HOME, "opencode");
-  if (process.platform === "win32") {
-    const root = process.env.APPDATA || process.env.LOCALAPPDATA || os.homedir();
-    return path.join(root, "opencode");
-  }
-  if (process.platform === "darwin") {
-    const mac = path.join(os.homedir(), "Library", "Application Support", "opencode");
-    const linux = path.join(os.homedir(), ".local", "share", "opencode");
-    return fs.existsSync(mac) ? mac : linux;
-  }
   return path.join(os.homedir(), ".local", "share", "opencode");
 }
 
 export function getOpencodeStateDir(): string {
   if (process.env.OPENCODE_STATUSLINE_STATE_DIR) return process.env.OPENCODE_STATUSLINE_STATE_DIR;
   if (process.env.XDG_STATE_HOME) return path.join(process.env.XDG_STATE_HOME, "opencode");
-  if (process.platform === "win32") {
-    const root = process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir();
-    return path.join(root, "opencode", "state");
-  }
   return path.join(os.homedir(), ".local", "state", "opencode");
 }
 
 export function getAuthJsonPath(): string {
   if (process.env.OPENCODE_AUTH_JSON) return process.env.OPENCODE_AUTH_JSON;
-  const candidates = process.platform === "win32"
-    ? [
-        path.join(process.env.APPDATA || "", "opencode", "auth.json"),
-        path.join(process.env.LOCALAPPDATA || "", "opencode", "auth.json")
-      ].filter(Boolean)
-    : [
-        path.join(getOpencodeDataDir(), "auth.json"),
-        path.join(os.homedir(), "Library", "Application Support", "opencode", "auth.json")
-      ];
+  const candidates = [
+    path.join(getOpencodeDataDir(), "auth.json"),
+    path.join(os.homedir(), "Library", "Application Support", "opencode", "auth.json"),
+    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode", "auth.json") : undefined,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "opencode", "auth.json") : undefined
+  ].filter((candidate): candidate is string => Boolean(candidate));
   return firstExistingPath(candidates);
 }
 
@@ -149,25 +133,32 @@ export function resolveApiCredential(input: {
   const providerKey = toNonEmptyString(input.providerInfo?.key);
   if (providerKey) return { token: providerKey, source: { type: "provider", label: "provider.key" } };
 
-  const auth = readAuthEntry(input.authKeys);
-  const authKey = toNonEmptyString(auth?.entry.key);
-  if (auth?.entry.type === "api" && authKey) {
-    return { token: authKey, source: { type: "auth", label: `auth.json:${auth.key}` } };
+  const auth = readAuthJson();
+  for (const key of input.authKeys) {
+    const entry = auth[key];
+    const authKey = toNonEmptyString(entry?.key);
+    if (entry?.type === "api" && authKey) {
+      return { token: authKey, source: { type: "auth", label: `auth.json:${key}` } };
+    }
   }
   return undefined;
 }
 
 export function resolveOAuthCredential(keys: readonly string[]): OAuthCredential | undefined {
-  const auth = readAuthEntry(keys);
-  const access = toNonEmptyString(auth?.entry.access);
-  if (!auth || auth.entry.type !== "oauth" || !access) return undefined;
-  return {
-    access,
-    refresh: toNonEmptyString(auth.entry.refresh),
-    expires: typeof auth.entry.expires === "number" ? auth.entry.expires : undefined,
-    accountId: toNonEmptyString(auth.entry.accountId),
-    source: { type: "auth", label: `auth.json:${auth.key}` }
-  };
+  const auth = readAuthJson();
+  for (const key of keys) {
+    const entry = auth[key];
+    const access = toNonEmptyString(entry?.access);
+    if (entry?.type !== "oauth" || !access) continue;
+    return {
+      access,
+      refresh: toNonEmptyString(entry.refresh),
+      expires: typeof entry.expires === "number" ? entry.expires : undefined,
+      accountId: toNonEmptyString(entry.accountId),
+      source: { type: "auth", label: `auth.json:${key}` }
+    };
+  }
+  return undefined;
 }
 
 export function describeCredentialSource(source: CredentialSource | undefined): string | undefined {

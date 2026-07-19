@@ -158,9 +158,12 @@ function modelFromStateEntry(entry: unknown): ModelMeta | undefined {
   return providerID ? { providerID, modelID } : undefined;
 }
 
-function readRecentModelState(providers?: readonly ProviderInfoLike[]): RecentModelState | undefined {
+function readRecentModelState(
+  providers?: readonly ProviderInfoLike[],
+  stateDir = getOpencodeStateDir()
+): RecentModelState | undefined {
   try {
-    const file = path.join(getOpencodeStateDir(), "model.json");
+    const file = path.join(stateDir, "model.json");
     const stat = fs.statSync(file);
     const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
     if (!isRecord(parsed) || !Array.isArray(parsed.recent)) return undefined;
@@ -174,12 +177,18 @@ function readRecentModelState(providers?: readonly ProviderInfoLike[]): RecentMo
   return undefined;
 }
 
-export function readRecentModelStateFromFile(providers?: readonly ProviderInfoLike[]): RecentModelState | undefined {
-  return readRecentModelState(providers);
+export function readRecentModelStateFromFile(
+  providers?: readonly ProviderInfoLike[],
+  stateDir?: string
+): RecentModelState | undefined {
+  return readRecentModelState(providers, stateDir);
 }
 
-export function readRecentModelFromState(providers?: readonly ProviderInfoLike[]): ModelMeta | undefined {
-  return readRecentModelState(providers)?.model;
+export function readRecentModelFromState(
+  providers?: readonly ProviderInfoLike[],
+  stateDir?: string
+): ModelMeta | undefined {
+  return readRecentModelState(providers, stateDir)?.model;
 }
 
 export async function resolveActiveModel(input: {
@@ -188,6 +197,7 @@ export async function resolveActiveModel(input: {
   config?: Record<string, unknown>;
   commandModel?: unknown;
   providers?: readonly ProviderInfoLike[];
+  stateDir?: string;
 }): Promise<ModelMeta | undefined> {
   const commandModel = parseModelString(input.commandModel);
   if (commandModel) return commandModel;
@@ -195,7 +205,7 @@ export async function resolveActiveModel(input: {
   const configModel = parseModelString(input.config?.model);
   const session = await getSessionData(input.client, input.sessionID);
   const messages = await getSessionMessages(input.client, input.sessionID);
-  const recentModel = readRecentModelState(input.providers);
+  const recentModel = readRecentModelState(input.providers, input.stateDir);
   const activityMs = latestActivityMs(session, messages);
   const recentIsCurrentRunSelection = recentModel && recentModel.mtimeMs + 1_000 >= PLUGIN_STARTED_AT_MS;
   const recentIsAfterSessionActivity = recentModel && (activityMs === undefined || recentModel.mtimeMs + 1_000 >= activityMs);
@@ -250,6 +260,7 @@ export async function buildCurrentProviderUsageReport(input: {
   sessionID: string;
   force?: boolean;
   commandModel?: unknown;
+  stateDir?: string;
 }): Promise<{ report?: UsageReport; model?: ModelMeta; config: Record<string, unknown> }> {
   const config = await getConfigData(input.client);
   const providers = await getConfiguredProviders(input.client);
@@ -258,7 +269,8 @@ export async function buildCurrentProviderUsageReport(input: {
     sessionID: input.sessionID,
     config,
     commandModel: input.commandModel,
-    providers
+    providers,
+    stateDir: input.stateDir
   });
   if (!model) return { config };
 

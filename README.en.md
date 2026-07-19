@@ -135,15 +135,15 @@ Available fields:
 | Context remaining | model context limit minus current context estimate |
 | Context length | current model context limit |
 | Context used/total | compact used/limit display |
-| TTFT/speed | approximate time to first output and output token generation speed; keeps the last complete value while a new response is still incomplete |
+| TTFT/speed | approximate time to first text/reasoning output and output+reasoning token speed; excludes tool execution time |
 | Subagent status | active subagent or child-session status; idle/completed children are omitted |
 | Main agent status | current main session status, without an `agent` prefix; transient `queued`/`pending` is omitted |
 | 5h quota | provider 5h quota used percent, when available |
 | Weekly quota | provider weekly quota used percent, when available |
 | Provider balance | prepaid balance or remaining limit reported by the provider as `bal $12.34` |
-| Session input/output tokens | accumulated session and child-session input/output tokens as `<input> in / <output> out` |
-| Session total tokens | accumulated session and child-session total tokens as `<total> used`; includes reasoning/cache tokens when OpenCode exposes them |
-| Session cost | accumulated session and child-session cost as `cost $0.02`; shows `eq $0.02` when estimated from model pricing |
+| Session input/output tokens | accumulated session and nested descendant-session input/output tokens as `<input> in / <output> out` |
+| Session total tokens | accumulated session and nested descendant-session total tokens as `<total> used`; includes reasoning/cache tokens |
+| Session cost | accumulated session and nested descendant-session cost as `cost $0.02`; shows `eq $0.02` when estimated from model pricing |
 
 Unavailable provider/model data is omitted. For example, OpenRouter has balance and usage totals, but no 5h subscription quota window.
 
@@ -151,11 +151,11 @@ Unavailable provider/model data is omitted. For example, OpenRouter has balance 
 
 Quota/balance fields reuse the provider usage cache. After a manual `/usage` refresh, the statusline prefers cached data even during brief `queued`/`pending` states or while the session is busy, instead of clearing the fields.
 
-`Git diff stats` reads only the local git worktree. It sums tracked-file changes from `git diff --numstat` and `git diff --cached --numstat` relative to HEAD; untracked files and binary files are not included. The field is recomputed on statusline refresh and clears its short cache when the session updates, avoiding repeated git processes during streaming output.
+`Git diff stats` reads only the local worktree and runs one `git diff HEAD --numstat`, avoiding staged/unstaged double counting. Untracked and binary files are excluded.
 
 For subscription or coding-plan providers, `Session cost` may be an equivalent per-token estimate rather than an actual amount charged. It prefers OpenCode's recorded message cost when present, then falls back to model catalog pricing.
 
-The statusline always registers `session_prompt`. On Linux/macOS, it wraps `api.ui.Prompt` and preserves existing `session_prompt_right` content so it can measure the right-side width. On Windows, it wraps the native Prompt and places the statusline in the Prompt `right` content, but does not register or nest-read `session_prompt_right`, avoiding the right-slot registration path in newer opencode builds. Both paths dynamically truncate this plugin's fields to avoid wrapping onto the next line.
+The statusline uses one precompiled OpenTUI 0.4 path on every platform. It wraps `session_prompt`, places fields in the Prompt `right` content, and preserves existing `session_prompt_right` content. Fields are truncated by real terminal column width to prevent wrapping.
 
 ## Supported Providers
 
@@ -166,12 +166,13 @@ The statusline always registers `session_prompt`. On Linux/macOS, it wraps `api.
 | Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota, time quota |
 | Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota, time quota |
 | Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage windows, including 5h when present |
-| MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h and weekly token quota |
+| MiniMax coding plan | `minimax`, `minimax-coding-plan` | `MINIMAX_CODING_PLAN_API_KEY`, `MINIMAX_API_KEY` | international 5h and weekly token quota |
+| MiniMax CN coding plan | `minimax-cn`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | China 5h and weekly token quota |
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | model calls use `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY`; usage requires `XIAOMI_MIMO_SESSION_COOKIE` | plan/compensation/monthly credits quota, credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance and availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label, remaining limit, total limit, usage totals |
 | OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h, weekly, and monthly dashboard quota |
-| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OAuth entry in OpenCode `auth.json` | ChatGPT plan, 5h/weekly quota, code review quota, credits |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OAuth entry in OpenCode `auth.json` | ChatGPT plan, 5h/weekly/monthly quota, code review quota, credits |
 
 API-key providers resolve credentials in this order:
 
@@ -231,7 +232,7 @@ mkdir -p .tmp
 TMPDIR=$PWD/.tmp npm test
 ```
 
-OpenCode resolves the TUI entry from `dist/tui.tsx`, so run `npm run build` after source changes before testing in the TUI.
+OpenCode resolves the precompiled TUI entry from `dist/tui.js`, so run `npm run build` after source changes before testing in the TUI.
 
 Source layout:
 

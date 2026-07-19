@@ -16,6 +16,8 @@ import {
   type StatuslineFieldID
 } from "./lib/statusline-config.js";
 import { isRecord, sanitizeDisplayText, toNonEmptyString } from "./lib/format.js";
+import { displayColumns, takeColumns } from "./lib/display-width.js";
+import { DialogRequestLifecycle } from "./lib/dialog-lifecycle.js";
 
 const id = "opencode-statusline";
 const STATUSLINE_SLOT_ORDER = 95;
@@ -34,7 +36,7 @@ const STATUSLINE_SAFETY_COLUMNS = 2;
 const MIN_STATUSLINE_COLUMNS = 8;
 const STATUSLINE_SEPARATOR = " | ";
 const configListeners = new Set<() => void>();
-let usageDialogOpen = false;
+const usageDialogLifecycle = new DialogRequestLifecycle();
 
 function notifyConfigChanged(): void {
   for (const listener of configListeners) listener();
@@ -115,8 +117,7 @@ function usageRows(message: string): Array<{ label?: string; value: string }> {
 }
 
 function closeUsageDialog(api: TuiPluginApi): void {
-  if (!usageDialogOpen) return;
-  usageDialogOpen = false;
+  if (!usageDialogLifecycle.cancel()) return;
   api.ui.dialog.clear();
 }
 
@@ -172,26 +173,27 @@ function UsageDialog(props: { api: TuiPluginApi; message: string; onClose: () =>
   );
 }
 
-function showUsageDialog(api: TuiPluginApi, message: string): void {
-  api.ui.dialog.replace(
-    () => <UsageDialog api={api} message={message} onClose={() => closeUsageDialog(api)} />,
-    () => {
-      usageDialogOpen = false;
-    }
-  );
-  usageDialogOpen = true;
+function showUsageDialog(api: TuiPluginApi, message: string, requestVersion: number): void {
+  const installed = usageDialogLifecycle.install(requestVersion, (onClose) => {
+    api.ui.dialog.replace(
+      () => <UsageDialog api={api} message={message} onClose={() => closeUsageDialog(api)} />,
+      onClose
+    );
+  });
+  if (!installed) return;
   api.ui.dialog.setSize("large");
 }
 
 function openUsageDialog(api: TuiPluginApi): void {
   const sessionID = currentSessionID(api) ?? "";
   const notice = sessionID ? "" : "No open session: using configured or recent model.\n\n";
-  showUsageDialog(api, "Loading usage...");
+  const requestVersion = usageDialogLifecycle.begin();
+  showUsageDialog(api, "Loading usage...", requestVersion);
   void buildTuiUsageText(api, sessionID)
-    .then((message) => showUsageDialog(api, `${notice}${message}`))
+    .then((message) => showUsageDialog(api, `${notice}${message}`, requestVersion))
     .catch((err) => {
       const message = err instanceof Error && err.message ? err.message : "Could not load usage.";
-      showUsageDialog(api, `Usage unavailable\n\n${message}`);
+      showUsageDialog(api, `Usage unavailable\n\n${message}`, requestVersion);
     });
 }
 
@@ -231,40 +233,6 @@ function withTimeout<Value>(promise: Promise<Value>, ms: number): Promise<Value 
       }
     );
   });
-}
-
-function displayColumns(value: string): number {
-  let width = 0;
-  for (const char of value) {
-    const code = char.codePointAt(0) ?? 0;
-    if (code === 0 || code < 0x20 || (code >= 0x7f && code < 0xa0)) continue;
-    width += code >= 0x1100
-      && (code <= 0x115f
-        || code === 0x2329
-        || code === 0x232a
-        || (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f)
-        || (code >= 0xac00 && code <= 0xd7a3)
-        || (code >= 0xf900 && code <= 0xfaff)
-        || (code >= 0xfe10 && code <= 0xfe19)
-        || (code >= 0xfe30 && code <= 0xfe6f)
-        || (code >= 0xff00 && code <= 0xff60)
-        || (code >= 0xffe0 && code <= 0xffe6))
-      ? 2
-      : 1;
-  }
-  return width;
-}
-
-function takeColumns(value: string, maxColumns: number): string {
-  let used = 0;
-  let output = "";
-  for (const char of value) {
-    const width = displayColumns(char);
-    if (used + width > maxColumns) break;
-    output += char;
-    used += width;
-  }
-  return output;
 }
 
 function statuslineSegments(parts: readonly StatuslineDisplayPart[]): StatuslineSegment[] {
@@ -340,7 +308,7 @@ function modelFromMessage(message: unknown): PromptModelMeta {
 }
 
 function resolvePromptModel(api: TuiPluginApi, sessionID: string): PromptModelMeta {
-  const recent = readRecentModelStateFromFile(api.state.provider)?.model;
+  const recent = readRecentModelStateFromFile(api.state.provider, api.state.path.state)?.model;
   if (recent) return recent;
 
   const sessionMeta = modelFromSession(api.state.session.get(sessionID));
@@ -377,14 +345,30 @@ function providerModelName(provider: ProviderInfoLike | undefined, modelID: stri
   return isRecord(model) ? toNonEmptyString(model.name) ?? modelID : modelID;
 }
 
+function promptVariantLabel(api: TuiPluginApi, sessionID: string): string | undefined {
+  const messages = api.state.session.messages(sessionID);
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!isRecord(message) || message.role !== "user") continue;
+    const model = isRecord(message.model) ? message.model : undefined;
+    return toNonEmptyString(model?.variant)
+      ?? toNonEmptyString((message as unknown as Record<string, unknown>).variant);
+  }
+  return undefined;
+}
+
 function estimatePromptLeftColumns(api: TuiPluginApi, sessionID: string): number {
   const meta = resolvePromptModel(api, sessionID);
   const provider = api.state.provider.find((item) => item.id === meta.providerID);
+  const variant = promptVariantLabel(api, sessionID);
   const parts = [
     promptAgentLabel(api, sessionID),
+    "auto",
     meta.providerID || meta.modelID ? "·" : undefined,
     providerModelName(provider, meta.modelID),
-    toNonEmptyString(provider?.name) ?? meta.providerID
+    toNonEmptyString(provider?.name) ?? meta.providerID,
+    variant ? "·" : undefined,
+    variant
   ].filter((part): part is string => Boolean(part));
 
   const textColumns = parts.reduce((total, part) => total + displayColumns(part), 0);
@@ -512,7 +496,7 @@ function StatuslineView(props: {
   let lastRecentModelKey = "";
 
   const recentModelKey = () => {
-    const recent = readRecentModelStateFromFile(props.api.state.provider);
+    const recent = readRecentModelStateFromFile(props.api.state.provider, props.api.state.path.state);
     return recent ? `${recent.mtimeMs}:${recent.model.providerID}/${recent.model.modelID ?? ""}` : "";
   };
 
@@ -659,18 +643,9 @@ function PromptRightContent(props: { api: TuiPluginApi; sessionID: string }): JS
   );
 }
 
-function PromptStatuslineOnlyRightContent(props: { api: TuiPluginApi; sessionID: string }): JSX.Element {
-  return (
-    <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
-      <StatuslineView api={props.api} sessionID={props.sessionID} rightSlotColumns={0} />
-    </box>
-  );
-}
-
 function PromptWithInlineStatusline(props: {
   api: TuiPluginApi;
   prompt: PromptSlotProps;
-  preserveRightSlot: boolean;
 }): JSX.Element {
   return (
     <props.api.ui.Prompt
@@ -679,11 +654,7 @@ function PromptWithInlineStatusline(props: {
       disabled={props.prompt.disabled}
       onSubmit={props.prompt.on_submit}
       ref={props.prompt.ref as any}
-      right={
-        props.preserveRightSlot
-          ? <PromptRightContent api={props.api} sessionID={props.prompt.session_id} />
-          : <PromptStatuslineOnlyRightContent api={props.api} sessionID={props.prompt.session_id} />
-      }
+      right={<PromptRightContent api={props.api} sessionID={props.prompt.session_id} />}
     />
   );
 }
@@ -693,13 +664,7 @@ const tui: TuiPlugin = async (api) => {
     order: STATUSLINE_SLOT_ORDER,
     slots: {
       session_prompt(_ctx, props: PromptSlotProps) {
-        return (
-          <PromptWithInlineStatusline
-            api={api}
-            prompt={props}
-            preserveRightSlot={process.platform !== "win32"}
-          />
-        );
+        return <PromptWithInlineStatusline api={api} prompt={props} />;
       }
     }
   });
@@ -722,7 +687,7 @@ const tui: TuiPlugin = async (api) => {
         name: "opencode-statusline.usage.close",
         title: "Close usage dialog",
         hidden: true,
-        enabled: () => usageDialogOpen,
+        enabled: () => usageDialogLifecycle.isOpen(),
         run() {
           closeUsageDialog(api);
         }

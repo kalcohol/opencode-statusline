@@ -22,6 +22,10 @@ import { loadStatuslineConfig, type StatuslineFieldID } from "./statusline-confi
 const STATUSLINE_QUOTA_TIMEOUT_MS = 2_500;
 const SESSION_MESSAGES_FALLBACK_TIMEOUT_MS = 300;
 const SESSION_CHILDREN_TIMEOUT_MS = 300;
+const SESSION_DESCENDANTS_TIMEOUT_MS = 1_000;
+const MAX_DESCENDANT_DEPTH = 4;
+const MAX_DESCENDANT_SESSIONS = 24;
+const SESSION_CHILD_CONCURRENCY = 4;
 const GIT_DIFF_TIMEOUT_MS = 750;
 const GIT_DIFF_CACHE_TTL_MS = 1_500;
 const execFileAsync = promisify(execFile);
@@ -78,6 +82,7 @@ type ModelCostRow = {
   cacheRead: number;
   cacheWrite: number;
   tierSize?: number;
+  experimental?: boolean;
 };
 
 type GenerationMetrics = {
@@ -145,7 +150,8 @@ async function resolveTuiModel(api: TuiApiLike, sessionID: string): Promise<Mode
     client,
     sessionID,
     config: isRecord(api.state.config) ? api.state.config : {},
-    providers: api.state.provider
+    providers: api.state.provider,
+    stateDir: api.state.path.state
   });
   if (resolved) return resolved;
 
@@ -175,6 +181,25 @@ function withTimeout<Value>(promise: Promise<Value>, ms: number): Promise<Value 
       }
     );
   });
+}
+
+async function mapWithConcurrency<Input, Output>(
+  values: readonly Input[],
+  concurrency: number,
+  run: (value: Input) => Promise<Output>
+): Promise<Output[]> {
+  const output = new Array<Output>(values.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      output[index] = await run(values[index]);
+    }
+  };
+  const workerCount = Math.min(Math.max(1, concurrency), values.length);
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return output;
 }
 
 function clientCallWithTimeout<Value>(
@@ -271,31 +296,57 @@ function modelInfo(provider: ProviderInfoLike | undefined, modelID: string | und
   return isRecord(model) ? model : undefined;
 }
 
+function modelCostRow(
+  row: Record<string, unknown>,
+  tierSize?: number,
+  experimental = false
+): ModelCostRow {
+  const cache = isRecord(row.cache) ? row.cache : {};
+  return {
+    input: toFiniteNumber(row.input) ?? 0,
+    output: toFiniteNumber(row.output) ?? 0,
+    cacheRead: toFiniteNumber(cache.read) ?? toFiniteNumber(row.cache_read) ?? 0,
+    cacheWrite: toFiniteNumber(cache.write) ?? toFiniteNumber(row.cache_write) ?? 0,
+    tierSize,
+    experimental
+  };
+}
+
 function parseModelCostRows(model: Record<string, unknown> | undefined): ModelCostRow[] {
-  if (!model || !Array.isArray(model.cost)) return [];
-  return model.cost
-    .filter(isRecord)
-    .map((row) => {
+  if (!model) return [];
+  if (Array.isArray(model.cost)) {
+    return model.cost.filter(isRecord).map((row) => {
       const cache = isRecord(row.cache) ? row.cache : {};
       const tier = isRecord(row.tier) ? row.tier : undefined;
       const tierSize = tier?.type === "context" ? toFiniteNumber(tier.size) : undefined;
-      return {
-        input: toFiniteNumber(row.input) ?? 0,
-        output: toFiniteNumber(row.output) ?? 0,
-        cacheRead: toFiniteNumber(cache.read) ?? toFiniteNumber(row.cache_read) ?? 0,
-        cacheWrite: toFiniteNumber(cache.write) ?? toFiniteNumber(row.cache_write) ?? 0,
-        tierSize
-      };
+      return modelCostRow({ ...row, cache }, tierSize);
     });
+  }
+
+  if (!isRecord(model.cost)) return [];
+  const rows = [modelCostRow(model.cost)];
+  if (Array.isArray(model.cost.tiers)) {
+    for (const tierRow of model.cost.tiers.filter(isRecord)) {
+      const tier = isRecord(tierRow.tier) ? tierRow.tier : undefined;
+      const tierSize = tier?.type === "context" ? toFiniteNumber(tier.size) : undefined;
+      rows.push(modelCostRow(tierRow, tierSize));
+    }
+  }
+  if (isRecord(model.cost.experimentalOver200K)) {
+    rows.push(modelCostRow(model.cost.experimentalOver200K, 200_000, true));
+  }
+  return rows;
 }
 
 function selectModelCostRow(rows: readonly ModelCostRow[], tokens: TokenTotals): ModelCostRow | undefined {
   if (rows.length === 0) return undefined;
   const contextTokens = tokens.input + tokens.cacheRead + tokens.cacheWrite;
   const tiered = rows
-    .filter((row) => row.tierSize !== undefined && contextTokens > row.tierSize)
+    .filter((row) => !row.experimental && row.tierSize !== undefined && contextTokens > row.tierSize)
     .sort((left, right) => (right.tierSize ?? 0) - (left.tierSize ?? 0))[0];
-  return tiered ?? rows.find((row) => row.tierSize === undefined) ?? rows[0];
+  if (tiered) return tiered;
+  const experimental = rows.find((row) => row.experimental && row.tierSize !== undefined && contextTokens > row.tierSize);
+  return experimental ?? rows.find((row) => row.tierSize === undefined) ?? rows[0];
 }
 
 function estimateMessageCost(input: {
@@ -305,7 +356,7 @@ function estimateMessageCost(input: {
 }): number | undefined {
   if (!isRecord(input.message) || input.message.role !== "assistant") return undefined;
   const tokens = messageTokens(input.message);
-  if (tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite <= 0) return undefined;
+  if (tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite <= 0) return undefined;
 
   const messageMeta = modelFromMessage(input.message);
   const providerID = messageMeta.providerID ?? input.fallbackMeta.providerID;
@@ -314,11 +365,10 @@ function estimateMessageCost(input: {
   const costRow = selectModelCostRow(parseModelCostRows(modelInfo(provider, modelID)), tokens);
   if (!costRow) return undefined;
 
-  const cachedInput = tokens.cacheRead + tokens.cacheWrite;
-  const inputTokens = Math.max(0, tokens.input - cachedInput);
   return (
-    inputTokens * costRow.input
+    tokens.input * costRow.input
     + tokens.output * costRow.output
+    + tokens.reasoning * costRow.output
     + tokens.cacheRead * costRow.cacheRead
     + tokens.cacheWrite * costRow.cacheWrite
   ) / 1_000_000;
@@ -398,6 +448,27 @@ function latestAssistantMessages(messages: readonly unknown[]): Record<string, u
   return result;
 }
 
+function combinedIntervalDurationMs(intervals: Array<{ start: number; end: number }>): number | undefined {
+  const sorted = intervals
+    .filter((interval) => interval.end > interval.start)
+    .sort((left, right) => left.start - right.start);
+  if (sorted.length === 0) return undefined;
+
+  let total = 0;
+  let currentStart = sorted[0].start;
+  let currentEnd = sorted[0].end;
+  for (const interval of sorted.slice(1)) {
+    if (interval.start <= currentEnd) {
+      currentEnd = Math.max(currentEnd, interval.end);
+      continue;
+    }
+    total += currentEnd - currentStart;
+    currentStart = interval.start;
+    currentEnd = interval.end;
+  }
+  return total + currentEnd - currentStart;
+}
+
 function generationMetricsForMessage(api: TuiApiLike, message: Record<string, unknown>): GenerationMetrics | undefined {
   const messageID = toNonEmptyString(message?.id);
   if (!message || !messageID || !api.state.part) return undefined;
@@ -405,32 +476,27 @@ function generationMetricsForMessage(api: TuiApiLike, message: Record<string, un
   const created = messageTimeMs(message, "created");
   const completed = messageTimeMs(message, "completed");
   const parts = api.state.part(messageID).filter(isRecord);
-  const firstOutputStart = parts
-    .filter((part) => ["text", "reasoning", "tool"].includes(toNonEmptyString(part.type) ?? ""))
+  const generatedParts = parts.filter((part) => ["text", "reasoning"].includes(toNonEmptyString(part.type) ?? ""));
+  const firstOutputStart = generatedParts
     .map(partStartMs)
     .filter((value): value is number => value !== undefined)
     .sort((left, right) => left - right)[0];
-
-  const generatedParts = parts.filter((part) => ["text", "reasoning"].includes(toNonEmptyString(part.type) ?? ""));
-  const generationStart = generatedParts
-    .map(partStartMs)
-    .filter((value): value is number => value !== undefined)
-    .sort((left, right) => left - right)[0] ?? firstOutputStart ?? created;
-  const generationEnd = Math.max(
-    0,
-    ...generatedParts
-      .map(partEndMs)
-      .filter((value): value is number => value !== undefined)
-  ) || completed;
+  const generationDurationMs = combinedIntervalDurationMs(
+    generatedParts.flatMap((part) => {
+      const start = partStartMs(part);
+      const end = partEndMs(part) ?? completed;
+      return start !== undefined && end !== undefined ? [{ start, end }] : [];
+    })
+  );
 
   const tokens = messageTokens(message);
   const ttftMs = created !== undefined && firstOutputStart !== undefined
     ? Math.max(0, firstOutputStart - created)
     : undefined;
-  const durationSeconds = generationStart !== undefined && generationEnd !== undefined && generationEnd > generationStart
-    ? (generationEnd - generationStart) / 1000
+  const generatedTokens = tokens.output + tokens.reasoning;
+  const tokensPerSecond = generationDurationMs && generatedTokens > 0
+    ? generatedTokens / (generationDurationMs / 1000)
     : undefined;
-  const tokensPerSecond = durationSeconds && tokens.output > 0 ? tokens.output / durationSeconds : undefined;
 
   if (ttftMs === undefined && tokensPerSecond === undefined) return undefined;
   return { ttftMs, tokensPerSecond };
@@ -497,16 +563,8 @@ async function runGitNumstat(cwd: string, args: string[]): Promise<GitDiffStats 
 }
 
 async function loadGitDiffStats(cwd: string): Promise<GitDiffStats | undefined> {
-  const [unstaged, staged] = await Promise.all([
-    runGitNumstat(cwd, ["diff", "--no-ext-diff", "--numstat", "--"]),
-    runGitNumstat(cwd, ["diff", "--cached", "--no-ext-diff", "--numstat", "--"])
-  ]);
-  if (!unstaged && !staged) return undefined;
-
-  const stats = {
-    added: (unstaged?.added ?? 0) + (staged?.added ?? 0),
-    removed: (unstaged?.removed ?? 0) + (staged?.removed ?? 0)
-  };
+  const stats = await runGitNumstat(cwd, ["diff", "HEAD", "--no-ext-diff", "--numstat", "--"]);
+  if (!stats) return undefined;
   return stats.added > 0 || stats.removed > 0 ? stats : undefined;
 }
 
@@ -551,17 +609,24 @@ function agentStatusText(status: string | undefined): string | undefined {
   return status;
 }
 
-async function getChildSessions(api: TuiApiLike, sessionID: string): Promise<unknown[]> {
+async function getChildSessions(
+  api: TuiApiLike,
+  sessionID: string,
+  timeoutMs = SESSION_CHILDREN_TIMEOUT_MS
+): Promise<unknown[]> {
+  const deadline = Date.now() + timeoutMs;
   const attempts: unknown[][] = [
     [{ sessionID }],
     [{ path: { sessionID } }],
     [{ path: { id: sessionID } }]
   ];
   for (const args of attempts) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return [];
     try {
       const result = await clientCallWithTimeout(
         (signal) => Promise.resolve(api.client?.session?.children?.(...args, { signal })),
-        SESSION_CHILDREN_TIMEOUT_MS
+        remainingMs
       );
       if (result.timedOut) return [];
       const response = result.value;
@@ -574,23 +639,73 @@ async function getChildSessions(api: TuiApiLike, sessionID: string): Promise<unk
   return [];
 }
 
+function uniqueChildSessions(children: readonly unknown[], parentID: string): unknown[] {
+  const seen = new Set([parentID]);
+  const result: unknown[] = [];
+  for (const child of children) {
+    const id = isRecord(child) ? toNonEmptyString(child.id) : undefined;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    result.push(child);
+    if (result.length >= MAX_DESCENDANT_SESSIONS) break;
+  }
+  return result;
+}
+
 function childSessionIDs(children: readonly unknown[]): string[] {
   return children
     .map((child) => isRecord(child) ? toNonEmptyString(child.id) : undefined)
     .filter((id): id is string => Boolean(id));
 }
 
-async function getClientSessionMessages(api: TuiApiLike, sessionID: string): Promise<unknown[]> {
+async function getDescendantSessions(
+  api: TuiApiLike,
+  sessionID: string,
+  directChildren: readonly unknown[]
+): Promise<unknown[]> {
+  const deadline = Date.now() + SESSION_DESCENDANTS_TIMEOUT_MS;
+  const seen = new Set([sessionID]);
+  const descendants: unknown[] = [];
+  let frontier = [...directChildren];
+
+  for (let depth = 0; depth < MAX_DESCENDANT_DEPTH && frontier.length > 0; depth += 1) {
+    const current: string[] = [];
+    for (const child of frontier) {
+      const id = isRecord(child) ? toNonEmptyString(child.id) : undefined;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      descendants.push(child);
+      current.push(id);
+      if (descendants.length >= MAX_DESCENDANT_SESSIONS) return descendants;
+    }
+    const nested = await mapWithConcurrency(current, SESSION_CHILD_CONCURRENCY, (childID) => {
+      const remainingMs = Math.min(SESSION_CHILDREN_TIMEOUT_MS, deadline - Date.now());
+      return remainingMs > 0 ? getChildSessions(api, childID, remainingMs) : Promise.resolve([]);
+    });
+    frontier = nested.flat();
+    if (Date.now() >= deadline) break;
+  }
+  return descendants;
+}
+
+async function getClientSessionMessages(
+  api: TuiApiLike,
+  sessionID: string,
+  timeoutMs = SESSION_MESSAGES_FALLBACK_TIMEOUT_MS
+): Promise<unknown[]> {
+  const deadline = Date.now() + timeoutMs;
   const attempts: unknown[][] = [
     [{ sessionID }],
     [{ path: { sessionID } }],
     [{ path: { id: sessionID } }]
   ];
   for (const args of attempts) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return [];
     try {
       const result = await clientCallWithTimeout(
         (signal) => Promise.resolve(api.client?.session?.messages?.(...args, { signal })),
-        SESSION_MESSAGES_FALLBACK_TIMEOUT_MS
+        remainingMs
       );
       if (result.timedOut) return [];
       const response = result.value;
@@ -609,7 +724,7 @@ async function sessionMessages(api: TuiApiLike, sessionID: string): Promise<read
   if (sessionTokenTotals(local).total > 0) return local;
   const status = sessionStatusLabel(api.state.session.status(sessionID));
   if (!allowsBackgroundStatuslineRefresh(status)) return local;
-  const remote = await withTimeout(getClientSessionMessages(api, sessionID), SESSION_MESSAGES_FALLBACK_TIMEOUT_MS) ?? [];
+  const remote = await getClientSessionMessages(api, sessionID);
   if (sessionTokenTotals(remote).total > 0) return remote;
   return local.length > 0 ? local : remote;
 }
@@ -619,7 +734,11 @@ async function sessionMessagesWithChildren(
   messages: readonly unknown[],
   children: readonly unknown[]
 ): Promise<unknown[]> {
-  const childMessages = await Promise.all(childSessionIDs(children).map((childID) => sessionMessages(api, childID)));
+  const childMessages = await mapWithConcurrency(
+    childSessionIDs(children),
+    SESSION_CHILD_CONCURRENCY,
+    (childID) => sessionMessages(api, childID)
+  );
   return [...messages, ...childMessages.flat()];
 }
 
@@ -630,7 +749,7 @@ async function subagentText(api: TuiApiLike, sessionID: string, children?: reado
     return allowsBackgroundStatuslineRefresh(status) ? undefined : `sub ${status}`;
   }
 
-  const childSessions = children ?? await withTimeout(getChildSessions(api, sessionID), SESSION_CHILDREN_TIMEOUT_MS) ?? [];
+  const childSessions = children ?? uniqueChildSessions(await getChildSessions(api, sessionID), sessionID);
   if (childSessions.length === 0) return undefined;
   const statuses = childSessions.map((child) => {
     const childID = isRecord(child) ? toNonEmptyString(child.id) : undefined;
@@ -671,42 +790,61 @@ export async function buildTuiStatuslineParts(api: TuiApiLike, sessionID: string
   const fields = loadStatuslineConfig().fields;
   if (fields.length === 0) return [];
 
-  const messages = await sessionMessages(api, sessionID);
-  const meta = await resolveTuiModel(api, sessionID);
+  const [messages, meta] = await Promise.all([
+    sessionMessages(api, sessionID),
+    resolveTuiModel(api, sessionID)
+  ]);
   const provider = api.state.provider.find((item) => item.id === meta.providerID);
   const sessionStatus = sessionStatusLabel(api.state.session.status(sessionID));
   const canRefreshBackgroundFields = allowsBackgroundStatuslineRefresh(sessionStatus);
   const contextUsed = latestContextTokens(messages);
   const contextLimit = modelContextLimit(provider, meta.modelID);
   const generationMetrics = latestGenerationMetrics(api, messages);
-  const diffStats = fields.includes("git_diff_stats") && canRefreshBackgroundFields ? await gitDiffStats(api) : undefined;
   const childFields = fields.some((field) => ["subagent_status", "session_io", "session_total", "session_cost"].includes(field));
-  const children = childFields && canRefreshBackgroundFields
-    ? await withTimeout(getChildSessions(api, sessionID), SESSION_CHILDREN_TIMEOUT_MS) ?? []
-    : [];
-  const allMessages = childFields ? await sessionMessagesWithChildren(api, messages, children) : messages;
+  const diffStatsPromise = fields.includes("git_diff_stats") && canRefreshBackgroundFields
+    ? gitDiffStats(api)
+    : Promise.resolve(undefined);
+  const childDataPromise = childFields && canRefreshBackgroundFields
+    ? (async () => {
+        const directChildren = uniqueChildSessions(await getChildSessions(api, sessionID), sessionID);
+        const children = directChildren.length > 0
+          ? await getDescendantSessions(api, sessionID, directChildren)
+          : directChildren;
+        const allMessages = await sessionMessagesWithChildren(api, messages, children);
+        return { children, allMessages };
+      })()
+    : Promise.resolve({ children: [] as unknown[], allMessages: [...messages] });
+
+  const providerUsageFields = fields.some((field) => ["quota_5h", "quota_weekly", "provider_balance"].includes(field));
+  const providerID = meta.providerID;
+  const quotaReportPromise = providerID && providerUsageFields
+    ? (async () => {
+        const usageInput = {
+          providerID,
+          providerName: toNonEmptyString(provider?.name),
+          modelID: meta.modelID,
+          config: api.state.config,
+          providerInfo: provider
+        };
+        let report = readCachedProviderUsage(usageInput, { allowStale: true });
+        if (canRefreshBackgroundFields) {
+          const refreshed = await withTimeout(collectProviderUsage(usageInput), STATUSLINE_QUOTA_TIMEOUT_MS);
+          if (refreshed) report = refreshed;
+        }
+        return report?.ok ? report : undefined;
+      })()
+    : Promise.resolve(undefined);
+
+  const [diffStats, childData, quotaReport] = await Promise.all([
+    diffStatsPromise,
+    childDataPromise,
+    quotaReportPromise
+  ]);
+  const { children, allMessages } = childData;
   const sessionTokens = sessionTokenTotals(allMessages);
   const cost = fields.includes("session_cost")
     ? sessionCost({ providers: api.state.provider, fallbackMeta: meta, messages: allMessages })
     : undefined;
-
-  let quotaReport;
-  const providerUsageFields = fields.some((field) => ["quota_5h", "quota_weekly", "provider_balance"].includes(field));
-  if (meta.providerID && providerUsageFields) {
-    const usageInput = {
-      providerID: meta.providerID,
-      providerName: toNonEmptyString(provider?.name),
-      modelID: meta.modelID,
-      config: api.state.config,
-      providerInfo: provider
-    };
-    quotaReport = readCachedProviderUsage(usageInput, { allowStale: true });
-    if (canRefreshBackgroundFields) {
-      const refreshed = await withTimeout(collectProviderUsage(usageInput), STATUSLINE_QUOTA_TIMEOUT_MS);
-      if (refreshed) quotaReport = refreshed;
-    }
-    if (quotaReport && !quotaReport.ok) quotaReport = undefined;
-  }
 
   const parts: TuiStatuslinePart[] = [];
   for (const field of fields) {

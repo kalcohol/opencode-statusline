@@ -135,15 +135,15 @@ reset 時刻はローカル時刻で、固定幅の `YYYY-MM-DD HH:mm:ss` 形式
 | Context remaining | model context limit から現在の context 推定値を引いた値 |
 | Context length | 現在の model context limit |
 | Context used/total | 使用済み/総 context window のコンパクト表示 |
-| TTFT/speed | 初回出力までの近似時間と output token 生成速度。新しい応答が未完了の間は直近の完全な値を保持します |
+| TTFT/speed | 最初の text/reasoning output までの近似時間と output+reasoning token 速度。tool execution time は除外します |
 | Subagent status | active subagent または child-session の状態。idle/completed の child は省略します |
 | Main agent status | 現在の main session 状態。`agent` prefix は付けません。一時的な `queued`/`pending` は省略します |
 | 5h quota | provider の 5h quota 使用率。利用可能な場合のみ表示 |
 | Weekly quota | provider の weekly quota 使用率。利用可能な場合のみ表示 |
 | Provider balance | provider が返す prepaid balance または remaining limit。`bal $12.34` 形式 |
-| Session input/output tokens | session と child-session の累計 input/output tokens。`<input> in / <output> out` 形式 |
-| Session total tokens | session と child-session の累計 total tokens。`<total> used` 形式。OpenCode が reasoning/cache tokens を出す場合は含めます |
-| Session cost | session と child-session の累計 cost。`cost $0.02` 形式。model pricing から推定した場合は `eq $0.02` と表示します |
+| Session input/output tokens | session と nested descendant-session の累計 input/output tokens。`<input> in / <output> out` 形式 |
+| Session total tokens | session と nested descendant-session の累計 total tokens。`<total> used` 形式。reasoning/cache tokens も含めます |
+| Session cost | session と nested descendant-session の累計 cost。`cost $0.02` 形式。model pricing から推定した場合は `eq $0.02` と表示します |
 
 利用できない provider/model データは省略されます。たとえば OpenRouter は balance と usage totals を持ちますが、coding plan と同じ意味の 5h subscription quota window はないため `5h quota` は表示されません。
 
@@ -151,11 +151,11 @@ reset 時刻はローカル時刻で、固定幅の `YYYY-MM-DD HH:mm:ss` 形式
 
 Quota/balance fields は provider usage cache を再利用します。手動で `/usage` を実行した後は、短い `queued`/`pending` 状態や session busy 中でも statusline は cached data を優先し、fields を空にしません。
 
-`Git diff stats` はローカル git worktree だけを読みます。HEAD に対する tracked file の変更を `git diff --numstat` と `git diff --cached --numstat` から合計します。untracked file と binary file は含めません。このフィールドは statusline refresh で再計算され、session 更新時に短い cache をクリアするため、streaming output 中に git process を過剰に起動しません。
+`Git diff stats` は local worktree に対して一度だけ `git diff HEAD --numstat` を実行し、staged/unstaged の重複計数を避けます。untracked file と binary file は含めません。
 
 subscription や coding plan provider では、`Session cost` は実際の課金額ではなく token 単価による等価推定になることがあります。OpenCode が message に記録した cost を優先し、ない場合だけ model catalog pricing へ fallback します。
 
-Statusline は常に `session_prompt` を登録します。Linux/macOS では `api.ui.Prompt` を wrap し、既存の `session_prompt_right` content を保持して右側の幅を測定します。Windows では native Prompt を wrap し、statusline を Prompt の `right` content に入れますが、`session_prompt_right` を登録したり nest-read したりしないことで、新しい opencode の right-slot registration path を避けます。どちらの経路でもこの plugin の fields を動的に truncate し、prompt が次の行へ折り返さないようにします。
+Statusline は全 platform で同じ precompiled OpenTUI 0.4 path を使います。`session_prompt` を wrap し、fields を Prompt の `right` content に入れ、既存の `session_prompt_right` content も保持します。real terminal column width に合わせて truncate し、prompt の折り返しを防ぎます。
 
 ## 対応 Providers
 
@@ -166,12 +166,13 @@ Statusline は常に `session_prompt` を登録します。Linux/macOS では `a
 | Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota、time quota |
 | Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota、time quota |
 | Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage windows、存在する場合は 5h window |
-| MiniMax CN coding plan | `minimax`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 5h と weekly token quota |
+| MiniMax coding plan | `minimax`, `minimax-coding-plan` | `MINIMAX_CODING_PLAN_API_KEY`, `MINIMAX_API_KEY` | international 5h と weekly token quota |
+| MiniMax CN coding plan | `minimax-cn`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | China 5h と weekly token quota |
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | model calls は `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY`、usage は `XIAOMI_MIMO_SESSION_COOKIE` が必要 | plan/compensation/monthly credits quota、credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance と availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、total limit、usage totals |
 | OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h、weekly、monthly dashboard quota |
-| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly quota、code review quota、credits |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly/monthly quota、code review quota、credits |
 
 API key provider は次の順序で認証情報を解決します：
 
@@ -231,7 +232,7 @@ mkdir -p .tmp
 TMPDIR=$PWD/.tmp npm test
 ```
 
-OpenCode は TUI entry を `dist/tui.tsx` から解決します。source を変更した後は、TUI で試す前に `npm run build` を実行してください。
+OpenCode は precompiled TUI entry を `dist/tui.js` から解決します。source を変更した後は、TUI で試す前に `npm run build` を実行してください。
 
 Source layout：
 
