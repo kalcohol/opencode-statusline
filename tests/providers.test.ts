@@ -104,6 +104,51 @@ describe("provider collection", () => {
     expect(report.balances[0]?.value).toBe("$10.00");
   });
 
+  it("queries OpenCode Go usage with the regular API key", async () => {
+    process.env.OPENCODE_API_KEY = "go-key";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      usage: {
+        rolling: { status: "ok", percent: 12.5, resetsAt: "2026-08-19T01:00:00.000Z" },
+        weekly: { status: "rate-limited", percent: 100, resetsAt: "2026-08-24T00:00:00.000Z" },
+        monthly: { status: "ok", percent: 40, resetsAt: "2026-09-18T00:00:00.000Z" }
+      }
+    }));
+
+    const report = await collectProviderUsage({ providerID: "opencode-go", force: true });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://opencode.ai/zen/go/v1/usage");
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe("Bearer go-key");
+    expect(report.ok).toBe(true);
+    expect(report.plan).toBe("OpenCode Go");
+    expect(report.auth).toBe("env:OPENCODE_API_KEY");
+    expect(findUsageWindow(report, "fiveHour")).toMatchObject({
+      usedPercent: 12.5,
+      remainingPercent: 87.5,
+      resetAtMs: Date.parse("2026-08-19T01:00:00.000Z")
+    });
+    expect(findUsageWindow(report, "weekly")?.usedPercent).toBe(100);
+    expect(findUsageWindow(report, "monthly")?.usedPercent).toBe(40);
+  });
+
+  it("reads the OpenCode Go API key from auth.json", async () => {
+    delete process.env.OPENCODE_API_KEY;
+    fs.writeFileSync(process.env.OPENCODE_AUTH_JSON!, JSON.stringify({
+      "opencode-go": { type: "api", key: "saved-go-key" }
+    }));
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      usage: {
+        rolling: { status: "ok", percent: 5, resetsAt: "2026-08-19T01:00:00.000Z" }
+      }
+    }));
+
+    const report = await collectProviderUsage({ providerID: "opencodego", force: true });
+
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe("Bearer saved-go-key");
+    expect(report.ok).toBe(true);
+    expect(report.auth).toBe("auth.json:opencode-go");
+    expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(5);
+  });
+
   it("classifies OpenAI windows by duration rather than response position", async () => {
     fs.writeFileSync(process.env.OPENCODE_AUTH_JSON!, JSON.stringify({
       openai: { type: "oauth", access: "a.b.c", expires: Date.now() + 60_000 }

@@ -37,7 +37,7 @@ Override with `OPENCODE_AUTH_JSON`.
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | `XIAOMI_MIMO_SESSION_COOKIE` for usage; `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY` for model calls | plan/compensation/monthly credits quota, credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance, availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label, remaining limit, usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h/weekly/monthly dashboard quota |
+| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_API_KEY` or the provider key saved by OpenCode | 5h/weekly/monthly subscription quota |
 | OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan, 5h/weekly/monthly quota, code review quota, credits |
 | OpenCode Zen | `opencode` | N/A | recognized, but no public quota API |
 
@@ -308,33 +308,39 @@ The plugin shows key label, limit/remaining limit, reset label, usage totals, BY
 
 ## OpenCode Go
 
-OpenCode Go does not expose a stable public JSON API. The plugin scrapes the workspace dashboard HTML.
-
-Required environment variables:
-
-| Variable | Meaning |
-| --- | --- |
-| `OPENCODE_GO_WORKSPACE_ID` | Workspace id from the dashboard URL |
-| `OPENCODE_GO_AUTH_COOKIE` | Browser `auth` cookie value |
-
-Request:
+OpenCode Go exposes an API-key-authenticated JSON usage endpoint. The plugin uses the standard API-key resolution order described above: set `OPENCODE_API_KEY` explicitly, or reuse the `opencode-go` key saved in OpenCode config, the runtime provider, or `auth.json`.
 
 ```text
-GET https://opencode.ai/workspace/<workspaceId>/go
-Cookie: auth=<authCookie>
-Accept: text/html
-User-Agent: Mozilla/5.0
+GET https://opencode.ai/zen/go/v1/usage
+Authorization: Bearer <token>
+User-Agent: OpenCode-Statusline/0.1
 ```
 
-The scraper looks for Solid hydration fragments in either field order:
+Response shape:
 
-```text
-rollingUsage:$R[n]={usagePercent:<number>,resetInSec:<number>}
-weeklyUsage:$R[n]={usagePercent:<number>,resetInSec:<number>}
-monthlyUsage:$R[n]={usagePercent:<number>,resetInSec:<number>}
+```json
+{
+  "usage": {
+    "rolling": {
+      "status": "ok",
+      "percent": 12.5,
+      "resetsAt": "2026-08-19T01:00:00.000Z"
+    },
+    "weekly": {
+      "status": "ok",
+      "percent": 30,
+      "resetsAt": "2026-08-24T00:00:00.000Z"
+    },
+    "monthly": {
+      "status": "ok",
+      "percent": 45,
+      "resetsAt": "2026-09-18T00:00:00.000Z"
+    }
+  }
+}
 ```
 
-Those map to 5h, weekly, and monthly windows. This collector is fragile by nature: dashboard HTML shape and auth cookie lifetime are outside the plugin's control.
+`usage.rolling`, `usage.weekly`, and `usage.monthly` map to the 5h, weekly, and monthly quota windows. `percent` is the used percentage and `resetsAt` is an absolute ISO 8601 reset time; `status` can be `ok` or `rate-limited`. This query no longer needs a workspace ID or browser cookie.
 
 ## OpenAI / ChatGPT / Codex OAuth
 

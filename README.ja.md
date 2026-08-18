@@ -171,7 +171,7 @@ Statusline は全 platform で同じ precompiled OpenTUI 0.4 path を使いま�
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | model calls は `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY`、usage は `XIAOMI_MIMO_SESSION_COOKIE` が必要 | plan/compensation/monthly credits quota、credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance と availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、total limit、usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h、weekly、monthly dashboard quota |
+| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_API_KEY` または OpenCode が保存した provider key | 5h、weekly、monthly subscription quota |
 | OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly/monthly quota、code review quota、credits |
 
 API key provider は次の順序で認証情報を解決します：
@@ -180,6 +180,8 @@ API key provider は次の順序で認証情報を解決します：
 2. OpenCode `provider.<id>.options.apiKey`
 3. runtime provider key
 4. OpenCode `auth.json`
+
+OpenCode Go は通常の Go API key を Bearer token として使い、`GET https://opencode.ai/zen/go/v1/usage` から quota を取得します。通常は OpenCode config または `auth.json` の `opencode-go` key をそのまま再利用でき、`OPENCODE_API_KEY` の明示設定にも対応します。workspace ID と browser cookie は不要です。
 
 OpenAI/ChatGPT/Codex usage は `auth.json` の OAuth を使います。`opencode` / OpenCode Zen は認識されますが、OpenCode Zen は現在 public balance/quota API を公開していないため quota フィールドは省略されます。
 

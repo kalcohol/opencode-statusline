@@ -96,8 +96,7 @@ const CREDENTIAL_ENV_KEYS = [
   "XIAOMI_MIMO_SESSION_COOKIE",
   "DEEPSEEK_API_KEY",
   "OPENROUTER_API_KEY",
-  "OPENCODE_GO_WORKSPACE_ID",
-  "OPENCODE_GO_AUTH_COOKIE"
+  "OPENCODE_API_KEY"
 ] as const;
 let authFileFingerprintCache: { statKey: string; value: string } | undefined;
 
@@ -303,10 +302,6 @@ export function fetchJsonWithTimeout(
   timeoutMs = DEFAULT_TIMEOUT_MS
 ): Promise<unknown> {
   return fetchBodyWithTimeout(url, init, (response) => response.json(), timeoutMs);
-}
-
-async function fetchText(url: string, init: RequestInit = {}): Promise<string> {
-  return fetchBodyWithTimeout(url, init, (response) => response.text(), DEFAULT_TIMEOUT_MS);
 }
 
 const fetchJson = fetchJsonWithTimeout;
@@ -796,67 +791,52 @@ async function queryOpenRouter(input: {
   }
 }
 
-function parseScrapedWindow(html: string, name: string): { usagePercent: number; resetInSec: number } | undefined {
-  const number = String.raw`(-?\d+(?:\.\d+)?)`;
-  const pctFirst = new RegExp(String.raw`${name}:\$R\[\d+\]=\{[^}]*usagePercent:${number}[^}]*resetInSec:${number}[^}]*\}`);
-  const resetFirst = new RegExp(String.raw`${name}:\$R\[\d+\]=\{[^}]*resetInSec:${number}[^}]*usagePercent:${number}[^}]*\}`);
-  const a = pctFirst.exec(html);
-  if (a) return { usagePercent: Number(a[1]), resetInSec: Number(a[2]) };
-  const b = resetFirst.exec(html);
-  if (b) return { usagePercent: Number(b[2]), resetInSec: Number(b[1]) };
-  return undefined;
-}
-
 async function queryOpenCodeGo(input: {
   providerID: string;
   providerName?: string;
   modelID?: string;
+  config?: unknown;
+  providerInfo?: ProviderInfoLike;
 }): Promise<UsageReport> {
-  const workspaceID = toNonEmptyString(process.env.OPENCODE_GO_WORKSPACE_ID);
-  const authCookie = toNonEmptyString(process.env.OPENCODE_GO_AUTH_COOKIE);
-  if (!workspaceID || !authCookie) {
-    return errorReport({
-      ...input,
-      error: "OPENCODE_GO_WORKSPACE_ID and OPENCODE_GO_AUTH_COOKIE are required"
-    });
-  }
+  const credential = resolveApiCredential({
+    env: ["OPENCODE_API_KEY"],
+    config: input.config,
+    providerIDs: ["opencode-go", "opencodego"],
+    authKeys: ["opencode-go", "opencodego"],
+    providerInfo: input.providerInfo
+  });
+  if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
+
   try {
-    const html = await fetchText(`https://opencode.ai/workspace/${encodeURIComponent(workspaceID)}/go`, {
+    const payload = await fetchJson("https://opencode.ai/zen/go/v1/usage", {
       headers: {
-        Accept: "text/html",
-        Cookie: `auth=${authCookie}`,
-        "User-Agent": "Mozilla/5.0"
+        Authorization: `Bearer ${credential.token}`,
+        "User-Agent": USER_AGENT
       }
     });
-    const report = baseReport({
-      ...input,
-      auth: { type: "env", label: "OPENCODE_GO_WORKSPACE_ID + OPENCODE_GO_AUTH_COOKIE" }
-    });
-    const rolling = parseScrapedWindow(html, "rollingUsage");
-    const weekly = parseScrapedWindow(html, "weeklyUsage");
-    const monthly = parseScrapedWindow(html, "monthlyUsage");
-    if (rolling) report.windows.push(windowFromUsage({
-      key: "fiveHour",
-      label: "5h quota",
-      usedPercent: rolling.usagePercent,
-      resetAtMs: resetAtFromSeconds(rolling.resetInSec)
-    }));
-    if (weekly) report.windows.push(windowFromUsage({
-      key: "weekly",
-      label: "Weekly quota",
-      usedPercent: weekly.usagePercent,
-      resetAtMs: resetAtFromSeconds(weekly.resetInSec)
-    }));
-    if (monthly) report.windows.push(windowFromUsage({
-      key: "monthly",
-      label: "Monthly quota",
-      usedPercent: monthly.usagePercent,
-      resetAtMs: resetAtFromSeconds(monthly.resetInSec)
-    }));
-    if (report.windows.length === 0) throw new Error("No known usage windows found in dashboard HTML");
+    if (!isRecord(payload)) throw new Error("Unexpected response shape");
+    const usage = isRecord(payload.usage) ? payload.usage : {};
+    const report = baseReport({ ...input, auth: credential.source });
+    report.plan = "OpenCode Go";
+
+    for (const [name, key, label] of [
+      ["rolling", "fiveHour", "5h quota"],
+      ["weekly", "weekly", "Weekly quota"],
+      ["monthly", "monthly", "Monthly quota"]
+    ] as const) {
+      const window = usage[name];
+      if (!isRecord(window) || toFiniteNumber(window.percent) === undefined) continue;
+      report.windows.push(windowFromUsage({
+        key,
+        label,
+        usedPercent: window.percent,
+        resetAtMs: resetAtFromDate(window.resetsAt)
+      }));
+    }
+    if (report.windows.length === 0) throw new Error("No usage windows found in response");
     return report;
   } catch (err) {
-    return errorReport({ ...input, error: err instanceof Error ? err.message : String(err) });
+    return errorReport({ ...input, auth: credential.source, error: err instanceof Error ? err.message : String(err) });
   }
 }
 

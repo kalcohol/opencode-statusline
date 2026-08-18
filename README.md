@@ -171,7 +171,7 @@ Statusline 在所有平台使用同一套预编译 OpenTUI 0.4 路径：包装 `
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | 模型调用用 `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY`；usage 需要 `XIAOMI_MIMO_SESSION_COOKIE` | plan/compensation/monthly credits quota，credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance 和 availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、total limit、usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h、weekly、monthly dashboard quota |
+| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_API_KEY` 或 OpenCode 已保存的 provider key | 5h、weekly、monthly subscription quota |
 | OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly/monthly quota、code review quota、credits |
 
 API key 类 provider 按以下顺序解析凭据：
@@ -180,6 +180,8 @@ API key 类 provider 按以下顺序解析凭据：
 2. OpenCode `provider.<id>.options.apiKey`
 3. runtime provider key
 4. OpenCode `auth.json`
+
+OpenCode Go 通过 `GET https://opencode.ai/zen/go/v1/usage` 查询额度，并使用常规 Go API key 进行 Bearer 认证。通常可直接复用 OpenCode 配置或 `auth.json` 中的 `opencode-go` key，也可显式设置 `OPENCODE_API_KEY`；不再需要 workspace ID 或浏览器 cookie。
 
 OpenAI/ChatGPT/Codex usage 使用 `auth.json` 中的 OAuth。`opencode` / OpenCode Zen 会被识别，但 OpenCode Zen 目前没有公开的 balance/quota API，因此 quota 字段会省略。
 

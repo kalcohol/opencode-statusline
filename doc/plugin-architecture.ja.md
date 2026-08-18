@@ -209,7 +209,7 @@ package は package-based plugin loading 互換のため、空 shim の server e
 Provider collectors は `src/lib/providers.ts` にあります。各 collector は：
 
 1. credentials を解決
-2. provider endpoint または dashboard を query
+2. provider endpoint を query
 3. provider-specific data を `UsageReport` に変換
 4. UI caller に throw せず error report を返す
 
@@ -218,6 +218,5 @@ Provider collectors は `src/lib/providers.ts` にあります。各 collector �
 ## Known Limits
 
 - OpenCode は local TUI state のすべてを plugin API で公開していないため、model switch detection は一部 local recent model state に依存します。
-- OpenCode Go は dashboard HTML scraping のため、dashboard が変わると壊れる可能性があります。
 - OpenAI OAuth token は読み取りますが、この plugin では refresh しません。
 - Provider quota fields は provider が公開している windows だけを描画します。

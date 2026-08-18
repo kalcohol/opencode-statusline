@@ -171,7 +171,7 @@ The statusline uses one precompiled OpenTUI 0.4 path on every platform. It wraps
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | model calls use `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY`; usage requires `XIAOMI_MIMO_SESSION_COOKIE` | plan/compensation/monthly credits quota, credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance and availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label, remaining limit, total limit, usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h, weekly, and monthly dashboard quota |
+| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_API_KEY` or the provider key saved by OpenCode | 5h, weekly, and monthly subscription quota |
 | OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OAuth entry in OpenCode `auth.json` | ChatGPT plan, 5h/weekly/monthly quota, code review quota, credits |
 
 API-key providers resolve credentials in this order:
@@ -180,6 +180,8 @@ API-key providers resolve credentials in this order:
 2. OpenCode `provider.<id>.options.apiKey`
 3. runtime provider key
 4. OpenCode `auth.json`
+
+OpenCode Go queries `GET https://opencode.ai/zen/go/v1/usage` with the regular Go API key as a Bearer token. The plugin normally reuses the `opencode-go` key from OpenCode config or `auth.json`; you can also set `OPENCODE_API_KEY` explicitly. A workspace ID and browser cookie are no longer required.
 
 OpenAI/ChatGPT/Codex usage uses OAuth from `auth.json`. `opencode` / OpenCode Zen is recognized, but OpenCode Zen does not currently expose a public balance/quota API, so quota fields are omitted.
 

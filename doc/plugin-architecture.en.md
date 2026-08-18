@@ -209,7 +209,7 @@ The package still ships a server entry as an empty shim for compatibility with p
 Provider collectors live in `src/lib/providers.ts`. Each collector:
 
 1. resolves credentials
-2. queries a provider endpoint or dashboard
+2. queries a provider endpoint
 3. converts provider-specific data into `UsageReport`
 4. returns an error report instead of throwing to UI callers
 
@@ -218,6 +218,5 @@ Detailed provider endpoints and response mappings are documented in [provider-qu
 ## Known Limits
 
 - OpenCode does not expose every local TUI state value through the plugin API, so model switch detection relies partly on local recent model state.
-- OpenCode Go is dashboard HTML scraping and can break when the dashboard changes.
 - OpenAI OAuth tokens are read but not refreshed by this plugin.
 - Provider quota fields only render windows that the provider exposes.

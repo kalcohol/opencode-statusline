@@ -37,7 +37,7 @@ default `auth.json` locations：
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | usage は `XIAOMI_MIMO_SESSION_COOKIE`、model calls は `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY` | plan/compensation/monthly credits quota、credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance、availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` | 5h/weekly/monthly dashboard quota |
+| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_API_KEY` または OpenCode が保存した provider key | 5h/weekly/monthly subscription quota |
 | OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly/monthly quota、code review quota、credits |
 | OpenCode Zen | `opencode` | N/A | recognized, but no public quota API |
 
@@ -308,33 +308,39 @@ plugin は key label、limit/remaining limit、reset label、usage totals、BYOK
 
 ## OpenCode Go
 
-OpenCode Go は stable public JSON API を公開していません。plugin は workspace dashboard HTML を scrape します。
-
-Required environment variables：
-
-| Variable | Meaning |
-| --- | --- |
-| `OPENCODE_GO_WORKSPACE_ID` | dashboard URL の workspace id |
-| `OPENCODE_GO_AUTH_COOKIE` | browser の `auth` cookie value |
-
-Request：
+OpenCode Go は API-key authentication 対応の JSON usage endpoint を公開しています。plugin は冒頭の標準 API key resolution order を使います。`OPENCODE_API_KEY` を明示設定するか、OpenCode config、runtime provider、または `auth.json` に保存された `opencode-go` key をそのまま再利用できます。
 
 ```text
-GET https://opencode.ai/workspace/<workspaceId>/go
-Cookie: auth=<authCookie>
-Accept: text/html
-User-Agent: Mozilla/5.0
+GET https://opencode.ai/zen/go/v1/usage
+Authorization: Bearer <token>
+User-Agent: OpenCode-Statusline/0.1
 ```
 
-scraper は Solid hydration fragments をどちらの field order でも探します。
+Response shape：
 
-```text
-rollingUsage:$R[n]={usagePercent:<number>,resetInSec:<number>}
-weeklyUsage:$R[n]={usagePercent:<number>,resetInSec:<number>}
-monthlyUsage:$R[n]={usagePercent:<number>,resetInSec:<number>}
+```json
+{
+  "usage": {
+    "rolling": {
+      "status": "ok",
+      "percent": 12.5,
+      "resetsAt": "2026-08-19T01:00:00.000Z"
+    },
+    "weekly": {
+      "status": "ok",
+      "percent": 30,
+      "resetsAt": "2026-08-24T00:00:00.000Z"
+    },
+    "monthly": {
+      "status": "ok",
+      "percent": 45,
+      "resetsAt": "2026-09-18T00:00:00.000Z"
+    }
+  }
+}
 ```
 
-これらは 5h、weekly、monthly windows に map します。この collector は性質上 fragile です。dashboard HTML shape と auth cookie lifetime は plugin の管理外です。
+`usage.rolling`、`usage.weekly`、`usage.monthly` はそれぞれ 5h、weekly、monthly quota window に map します。`percent` は used percentage、`resetsAt` は absolute ISO 8601 reset time です。`status` は `ok` または `rate-limited` になります。この query は workspace ID と browser cookie を必要としません。
 
 ## OpenAI / ChatGPT / Codex OAuth
 
