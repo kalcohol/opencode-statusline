@@ -7,12 +7,14 @@ import { openQuotaDialog } from "./lib/quota-dialog.js";
 import {
   DEFAULT_STATUSLINE_FIELDS,
   STATUSLINE_CONFIG_VERSION,
-  STATUSLINE_FIELDS,
   normalizeStatuslineFields,
   parseStatuslineFieldArguments,
-  toggleStatuslineField,
   type StatuslineFieldID
 } from "./lib/statusline-config.js";
+import {
+  createFieldSaveQueue,
+  runStatuslineEditor
+} from "./lib/statusline-editor.js";
 
 type Settings = {
   version: number;
@@ -22,17 +24,6 @@ type Settings = {
 type UpdateSettings = (mutation: (draft: Settings) => void) => Promise<void>;
 type FieldsAccessor = () => readonly StatuslineFieldID[];
 type PersistFields = (fields: readonly StatuslineFieldID[]) => Promise<unknown>;
-
-function fieldOptions(fields: readonly StatuslineFieldID[]) {
-  return STATUSLINE_FIELDS.map((field) => {
-    const index = fields.indexOf(field.id);
-    return {
-      title: `${index >= 0 ? "[x]" : "[ ]"} ${field.label}`,
-      value: field.id,
-      description: index >= 0 ? `#${index + 1} ${field.id}` : field.id
-    };
-  });
-}
 
 function sameFields(left: readonly StatuslineFieldID[], right: readonly StatuslineFieldID[]): boolean {
   return left.length === right.length && left.every((field, index) => field === right[index]);
@@ -62,39 +53,6 @@ async function saveFields(
   }
 }
 
-async function openStatuslineDialog(
-  context: Context,
-  persist: PersistFields,
-  fields: FieldsAccessor
-): Promise<void> {
-  let draft = [...fields()];
-  let current: StatuslineFieldID | undefined = draft[0];
-  while (true) {
-    const selected: StatuslineFieldID | undefined = await context.ui.dialog.select<StatuslineFieldID>({
-      title: "Statusline fields",
-      placeholder: "Search fields",
-      options: fieldOptions(draft),
-      current,
-      actions: [
-        {
-          bind: "ctrl+g",
-          title: "Clear all",
-          selection: "none",
-          onTrigger: () => {
-            draft = [];
-            void persist(draft);
-            context.ui.dialog.clear();
-          }
-        }
-      ]
-    });
-    if (!selected) return;
-    current = selected;
-    draft = toggleStatuslineField(draft, selected);
-    void persist(draft);
-  }
-}
-
 async function configureStatusline(
   context: Context,
   persist: PersistFields,
@@ -103,7 +61,12 @@ async function configureStatusline(
 ): Promise<void> {
   const raw = input?.trim();
   if (!raw) {
-    await openStatuslineDialog(context, persist, fields);
+    await runStatuslineEditor({
+      fields,
+      persist,
+      select: (options) => context.ui.dialog.select<StatuslineFieldID>(options),
+      clearDialog: () => context.ui.dialog.clear()
+    });
     return;
   }
 
@@ -140,11 +103,9 @@ export default Plugin.define({
       }
     });
     const fields: FieldsAccessor = () => normalizeStatuslineFields(settings.fields);
-    let saveQueue: Promise<unknown> = Promise.resolve();
-    const persist: PersistFields = (next) => {
-      saveQueue = saveQueue.then(() => saveFields(context, update, next));
-      return saveQueue;
-    };
+    const persist: PersistFields = createFieldSaveQueue((next) =>
+      saveFields(context, update, next)
+    );
     if (
       settings.version !== STATUSLINE_CONFIG_VERSION ||
       !Array.isArray(settings.fields) ||

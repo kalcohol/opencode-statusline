@@ -6,7 +6,6 @@ import type { UsageReport } from "./providers.js";
 import {
   buildStatuslineSnapshot,
   familyGenerationMetrics,
-  generationMetricsAfter,
   hasVcsProvider,
   renderStatuslineParts,
   sessionSubtree,
@@ -17,8 +16,7 @@ import {
 } from "./statusline.js";
 import type { StatuslineFieldID } from "./statusline-config.js";
 import { clearQuotaCaches, loadQuotaReport } from "./quota.js";
-import { SubagentBadgeTracker } from "./subagent-badge.js";
-import { familySyncTargets, isSubtreeSession } from "./statusline-view-logic.js";
+import { StatuslineEvents } from "./statusline-events.js";
 
 const QUOTA_FIELDS: readonly StatuslineFieldID[] = ["quota_5h", "quota_weekly", "provider_balance"];
 
@@ -94,9 +92,6 @@ export function Statusline(props: {
   const [quotaReport, setQuotaReport] = createSignal<KeyedValue<UsageReport>>();
   const [refreshTick, setRefreshTick] = createSignal(0);
   const [subagentDone, setSubagentDone] = createSignal<{ count: number; speed?: number }>({ count: 0 });
-  let subagentDoneTimer: ReturnType<typeof setTimeout> | undefined;
-  let subagentDoneVersion = 0;
-  const badgeTracker = new SubagentBadgeTracker();
 
   const session = createMemo(() => props.context.data.session.get(props.sessionID));
   const messages = createMemo(() => props.context.data.session.message.list(props.sessionID));
@@ -135,7 +130,6 @@ export function Statusline(props: {
   const wantVcs = createMemo(() => wantDiff() || props.fields.includes("branch"));
   const wantQuota = createMemo(() => props.fields.some((field) => QUOTA_FIELDS.includes(field)));
   const wantFamily = createMemo(() => props.fields.includes("family_generation"));
-  const familySynced = new Set<string>();
   const familyGeneration = createMemo(() => {
     if (!wantFamily()) return undefined;
     return familyGenerationMetrics({
@@ -161,6 +155,19 @@ export function Statusline(props: {
 
   let diffVersion = 0;
   let quotaVersion = 0;
+  const events = new StatuslineEvents({
+    currentSessionID: () => props.sessionID,
+    subtree: () => sessions(),
+    messages: (sessionID) => props.context.data.session.message.list(sessionID),
+    syncMessages: (sessionID) => props.context.data.session.message.sync(sessionID),
+    clearQuotaCaches,
+    resetQuota: () => {
+      quotaVersion += 1;
+      setQuotaReport(undefined);
+    },
+    refresh: () => setRefreshTick((value) => value + 1),
+    setBadge: (state) => setSubagentDone(state)
+  });
 
   createEffect(() => {
     if (!wantVcs()) return;
@@ -171,19 +178,7 @@ export function Statusline(props: {
 
   createEffect(() => {
     if (!wantFamily()) return;
-    const targets = familySyncTargets({
-      sessions: sessions(),
-      currentSessionID: props.sessionID,
-      synced: familySynced,
-      messages: (sessionID) => props.context.data.session.message.list(sessionID)
-    });
-    for (const sessionID of targets) {
-      familySynced.add(sessionID);
-      void props.context.data.session.message
-        .sync(sessionID)
-        .then(() => setRefreshTick((value) => value + 1))
-        .catch(() => undefined);
-    }
+    events.syncFamily(sessions());
   });
 
   createEffect(() => {
@@ -239,77 +234,20 @@ export function Statusline(props: {
     const sessionID = props.sessionID;
     if (sessionID === activeSessionID) return;
     activeSessionID = sessionID;
-    subagentDoneVersion += 1;
-    badgeTracker.reset();
-    familySynced.clear();
-    if (subagentDoneTimer) clearTimeout(subagentDoneTimer);
-    subagentDoneTimer = undefined;
-    setSubagentDone({ count: 0 });
+    events.resetSession();
   });
 
-  const inSubtree = (sessionID: string) =>
-    isSubtreeSession(sessionID, props.sessionID, sessions());
-
-  const onExecution = (event: { data: { sessionID: string } }) => {
-    const sessionID = event.data.sessionID;
-    if (sessionID === props.sessionID || inSubtree(sessionID)) {
-      setRefreshTick((value) => value + 1);
-    }
-  };
   const onExecutionStarted = (event: { data: { sessionID: string } }) => {
-    const sessionID = event.data.sessionID;
-    if (!inSubtree(sessionID)) return;
-    const messages = props.context.data.session.message.list(sessionID);
-    badgeTracker.start(sessionID, messages.at(-1)?.id);
-    subagentDoneVersion += 1;
-  };
-  const onSubagentDone = (event: { data: { sessionID: string } }) => {
-    const sessionID = event.data.sessionID;
-    if (!inSubtree(sessionID)) return;
-    const finished = badgeTracker.finish(sessionID);
-    if (!finished.counted) return;
-
-    setSubagentDone((previous) => ({ count: previous.count + 1, speed: undefined }));
-    if (subagentDoneTimer) clearTimeout(subagentDoneTimer);
-    subagentDoneTimer = setTimeout(() => {
-      badgeTracker.clearDone();
-      setSubagentDone({ count: 0 });
-    }, 8_000);
-
-    if (finished.afterID === undefined) return;
-    const version = ++subagentDoneVersion;
-    const speed = () =>
-      generationMetricsAfter(props.context.data.session.message.list(sessionID), finished.afterID!)
-        ?.tokensPerSecond;
-    const immediate = speed();
-    if (immediate !== undefined) {
-      setSubagentDone((previous) => ({ ...previous, speed: immediate }));
-      return;
-    }
-    void props.context.data.session.message
-      .sync(sessionID)
-      .then(() => {
-        if (version !== subagentDoneVersion) return;
-        const synced = speed();
-        if (synced !== undefined) {
-          setSubagentDone((previous) => ({ ...previous, speed: synced }));
-        }
-      })
-      .catch(() => undefined);
+    events.start(event.data.sessionID);
   };
   const onSucceeded = (event: { data: { sessionID: string } }) => {
-    onExecution(event);
-    onSubagentDone(event);
+    events.success(event.data.sessionID);
   };
   const onFailed = (event: { data: { sessionID: string } }) => {
-    badgeTracker.fail(event.data.sessionID);
-    onExecution(event);
+    events.fail(event.data.sessionID);
   };
   const onCredential = () => {
-    quotaVersion += 1;
-    clearQuotaCaches();
-    setQuotaReport(undefined);
-    setRefreshTick((value) => value + 1);
+    events.credentialChanged();
   };
   const unsubscribers = [
     props.context.data.on("session.execution.started", onExecutionStarted),
@@ -326,10 +264,7 @@ export function Statusline(props: {
   onCleanup(() => {
     diffVersion += 1;
     quotaVersion += 1;
-    subagentDoneVersion += 1;
-    badgeTracker.reset();
-    familySynced.clear();
-    if (subagentDoneTimer) clearTimeout(subagentDoneTimer);
+    events.dispose();
     clearInterval(refreshInterval);
     for (const unsubscribe of unsubscribers) unsubscribe();
   });
