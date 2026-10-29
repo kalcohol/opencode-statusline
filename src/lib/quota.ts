@@ -74,15 +74,11 @@ async function loadBuiltinGoReport(context: Context, target: QuotaTarget): Promi
   }
 }
 
-let lastCredentials: readonly CredentialEntry[] | undefined;
-
 async function loadCredentials(context: Context): Promise<readonly CredentialEntry[]> {
   try {
-    const value = await context.client.credential.list();
-    lastCredentials = value;
-    return value;
+    return await context.client.credential.list();
   } catch {
-    return lastCredentials ?? [];
+    return [];
   }
 }
 
@@ -97,9 +93,13 @@ export async function loadQuotaReport(
     toNonEmptyString(target.providerInfo?.name) ??
     target.providerID;
 
-  if (isOpenCodeGo(target.providerID)) {
+  let providerInfo = target.providerInfo;
+
+  if (isOpenCodeGo(target.providerID) && target.providerInfo?.integrationID === "opencode") {
     const builtin = await loadBuiltinGoReport(context, { ...target, providerName });
     if (builtin) return builtin;
+    // Fallback may use a direct Go key, but never the Console credential.
+    providerInfo = { ...target.providerInfo, integrationID: "opencode-go" };
   }
 
   const credentials = await loadCredentials(context);
@@ -107,7 +107,7 @@ export async function loadQuotaReport(
     providerID: target.providerID,
     providerName,
     modelID: target.modelID,
-    providerInfo: target.providerInfo,
+    providerInfo,
     credentials,
     force: options.force
   };

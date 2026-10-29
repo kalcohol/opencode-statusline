@@ -27,7 +27,7 @@ OAuth providers は V2 credential store の OAuth token だけを読みます。
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | usage は `XIAOMI_MIMO_SESSION_COOKIE`、model calls は `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY` | plan/compensation/monthly credits quota、credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance、availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | 組み込み `usage.limits` 優先、`OPENCODE_API_KEY` または credential fallback | 5h/weekly/monthly subscription quota |
+| OpenCode Go | `opencode-go`, `opencodego` | Console integration は組み込み `usage.limits`、独立 Go integration は自身の key / `OPENCODE_API_KEY` のみ | 5h/weekly/monthly subscription quota |
 | OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | V2 credential store OAuth entry | ChatGPT plan、5h/weekly/monthly quota、code review quota、credits |
 | OpenCode Zen | `opencode` | N/A | Console limits は組み込み `/usage` |
 
@@ -172,7 +172,7 @@ Response shape：
 }
 ```
 
-generic `minimax` provider は international endpoint を使い、explicit CN aliases だけが China endpoint を使います。実装は `MiniMax-M*` wildcard row を優先し、次に current model id と一致する row、最後に first row を選び、`*_usage_count` を used count として扱います。
+generic `minimax` provider は international endpoint を使い、explicit CN aliases だけが China endpoint を使います。実装は `MiniMax-M*` wildcard row を優先し、次に current model id と一致する row、最後に first row を選びます。`*_usage_count` の意味は endpoint で逆です。**international は remaining**、**China は used** を返すため、plugin は international の remaining を `used = total - remaining` に変換します。
 
 | Response fields | Usage window |
 | --- | --- |
@@ -304,7 +304,7 @@ OpenCode V2 の組み込み usage service は Go limits を提供します。
 GET /api/experimental/usage/limits
 ```
 
-plugin はまず `context.client.experimental.usage.limits()` を呼び、`data.go` を読みます。
+現在の provider の `integrationID === "opencode"`（OpenCode Console に紐づく）場合だけ、plugin は `context.client.experimental.usage.limits()` を呼び、`data.go` を読みます。
 
 ```ts
 data.go = {
@@ -316,7 +316,7 @@ data.go = {
 
 この経路は OpenCode Console credential を再利用し、追加 API key は不要です。
 
-`data.go` がない場合（Console 未ログインなど）は Go API-key endpoint に fallback します。
+独立した `opencode-go` integration は組み込み Console データを使わず、自分の Go API-key endpoint を使います。
 
 ```text
 GET https://opencode.ai/zen/go/v1/usage
@@ -324,7 +324,7 @@ Authorization: Bearer <token>
 User-Agent: OpenCode-Statusline/0.1
 ```
 
-fallback credential は V2 credential store または `OPENCODE_API_KEY` から取得します。
+この経路は `opencode-go`/`opencodego` integration の key または `OPENCODE_API_KEY` だけを受け入れます。Console OAuth/key はこの endpoint に送信しません。
 
 Response shape：
 

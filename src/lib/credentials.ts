@@ -35,9 +35,13 @@ function credentialOrgID(entry: CredentialEntry): string | undefined {
 }
 
 function tokenFromEntry(entry: CredentialEntry): string | undefined {
-  if (entry.value.type === "key") return entry.value.key || undefined;
-  if (entry.value.type === "oauth") return entry.value.access || undefined;
-  return undefined;
+  return entry.value.type === "key" ? entry.value.key || undefined : undefined;
+}
+
+function fingerprintValue(entry: CredentialEntry): string {
+  if (entry.value.type === "key") return entry.value.key;
+  if (entry.value.type === "oauth") return entry.value.access;
+  return entry.value.type;
 }
 
 function findEntry(
@@ -67,7 +71,7 @@ export function resolveApiCredential(input: {
   credentials?: CredentialSet;
   integrationIDs: readonly string[];
 }): ApiCredential | undefined {
-  const entry = findEntry(input.credentials, input.integrationIDs);
+  const entry = findEntry(input.credentials, input.integrationIDs, "key");
   const token = entry ? tokenFromEntry(entry) : undefined;
   if (entry && token) {
     return { token, source: credentialSource(entry), orgID: credentialOrgID(entry) };
@@ -111,7 +115,7 @@ export function credentialFingerprint(credentials: CredentialSet | undefined): s
   if (!credentials?.length) return "none";
   return credentials
     .map((entry) => {
-      const value = tokenFromEntry(entry) ?? entry.value.type;
+      const value = fingerprintValue(entry);
       return `${entry.integrationID}:${entry.label}:${entry.active ? "1" : "0"}:${value}`;
     })
     .join("\n");

@@ -118,7 +118,6 @@ describe("statusline snapshot rendering", () => {
     const snapshot = buildStatuslineSnapshot({
       messages: [assistant({ tokens: tokens(1000, 200, 50) })],
       models: [model],
-      model: { providerID: "openrouter", modelID: "model-a" },
       sessions: [root, child],
       session: root,
       repo: "project",
@@ -221,11 +220,21 @@ describe("statusline snapshot rendering", () => {
     const snapshot = buildStatuslineSnapshot({
       messages: [assistant({ tokens: tokens(1000, 100, 0) })],
       models: [model, { ...model, id: "model-b", modelID: "model-b", limit: { context: 200_000, output: 4096 } }],
-      model: { providerID: "openrouter", modelID: "model-b" },
       sessions: [session({ id: "root" })]
     });
 
     expect(snapshot.contextLimit).toBe(100_000);
+  });
+
+  it("does not borrow the current model's limit when the assistant model is absent", () => {
+    const snapshot = buildStatuslineSnapshot({
+      messages: [assistant({ tokens: tokens(1000, 100, 0) })],
+      models: [{ ...model, id: "model-b", modelID: "model-b", limit: { context: 200_000, output: 4096 } }],
+      sessions: [session({ id: "root" })]
+    });
+
+    expect(snapshot.contextUsed).toBe(1100);
+    expect(snapshot.contextLimit).toBeUndefined();
   });
 
   it("prefers remaining balance rows", () => {

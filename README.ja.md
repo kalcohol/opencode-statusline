@@ -62,7 +62,7 @@ OpenCode を再起動してください。TUI-only パッケージなので `ope
 
 ### `/quota`
 
-現在の provider の quota/balance を表示します。OpenCode Go は組み込み `usage.limits` を優先し、Console データがない場合は Go API key にフォールバックします。
+現在の provider の quota/balance を表示します。OpenCode Go は 2 経路です。OpenCode Console integration に紐づく provider は組み込み `usage.limits` を使い、独立した `opencode-go` integration は自分の API key を使います（Console データは読みません）。
 
 - `/quota`: サードパーティ provider の quota（Z.ai、Kimi、MiniMax、MiMo、DeepSeek、OpenRouter、OpenAI OAuth）+ OpenCode Go の簡易表示。
 - `/usage`: 組み込みの OpenCode Console workspace/model limits と Go limits。
@@ -110,7 +110,7 @@ repo | branch | git_diff_stats | quota_5h | quota_weekly | provider_balance
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | モデルは API key、usage は `XIAOMI_MIMO_SESSION_COOKIE` |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` または credential |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` または credential |
-| OpenCode Go | `opencode-go`, `opencodego` | 組み込み Console usage 優先、`OPENCODE_API_KEY` または credential fallback |
+| OpenCode Go | `opencode-go`, `opencodego` | Console integration は組み込み usage、独立 Go integration は自身の key / `OPENCODE_API_KEY` のみ |
 | OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | V2 credential store の OAuth |
 
 認証順:

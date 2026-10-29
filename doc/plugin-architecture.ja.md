@@ -140,8 +140,8 @@ V2 の `streamed` は provider response body の終了時刻であり、初回 t
 ### `/quota`
 
 - 現在の route/session/model/provider を解決します。
-- OpenCode Go は `client.experimental.usage.limits()` の `data.go` を優先します。
-- 組み込み Go データがない場合は `collectProviderUsage()` に fallback します。
+- OpenCode Console integration に紐づく Go provider は `client.experimental.usage.limits()` の `data.go` を使います。
+- 独立した `opencode-go` integration は組み込み Console データを読まず、自分の key collector を使います。
 - その他の provider は collector を使います。
 - dialog は `scrollbox` で高さを制限します。
 - 会話には書き込みません。
@@ -171,7 +171,7 @@ Credential 順:
 
 `auth.json` は読みません。OpenAI OAuth は `openai`/`codex`/`chatgpt` integration のみを受け入れ、OpenCode Console token が ChatGPT endpoint に送られないようにします。
 
-OpenCode Go は組み込み `usage.limits` を使う場合 API key 不要です。fallback collector は `OPENCODE_API_KEY` または Go credential を使います。
+OpenCode Go が組み込み `usage.limits` を使えるのは `integrationID === "opencode"` の場合だけです。独立した `opencode-go` integration は `OPENCODE_API_KEY` または自分の integration key を使い、Console credential は読みません。
 
 ## ビルド
 

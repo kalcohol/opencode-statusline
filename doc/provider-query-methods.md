@@ -27,7 +27,7 @@ OAuth 类 provider 只从 V2 credential store 读取 OAuth token。插件不再�
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | `XIAOMI_MIMO_SESSION_COOKIE` for usage; `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY` for model calls | plan/compensation/monthly credits quota，credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance，availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label，remaining limit，usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | 优先内置 `usage.limits`；回退 `OPENCODE_API_KEY` 或 credential | 5h/weekly/monthly subscription quota |
+| OpenCode Go | `opencode-go`, `opencodego` | Console integration 用内置 `usage.limits`；独立 Go integration 只用自身 key / `OPENCODE_API_KEY` | 5h/weekly/monthly subscription quota |
 | OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | V2 credential store OAuth entry | ChatGPT plan，5h/weekly/monthly quota，code review quota，credits |
 | OpenCode Zen | `opencode` | N/A | 使用内置 `/usage` 查看 Console limits |
 
@@ -172,7 +172,7 @@ Response shape:
 }
 ```
 
-The generic `minimax` provider uses the international endpoint; only explicit CN aliases use the China endpoint. The implementation selects the `MiniMax-M*` wildcard row first, then a row matching the current model id, then the first row. It treats `*_usage_count` as used count and emits:
+The generic `minimax` provider uses the international endpoint; only explicit CN aliases use the China endpoint. The implementation selects the `MiniMax-M*` wildcard row first, then a row matching the current model id, then the first row. The two endpoints use opposite `*_usage_count` semantics: **international reports remaining**, **China reports used**. The plugin converts international remaining counts to used (`used = total - remaining`) before emitting:
 
 | Response fields | Usage window |
 | --- | --- |
@@ -304,7 +304,7 @@ OpenCode V2 内置 usage 服务已经提供 Go 限额：
 GET /api/experimental/usage/limits
 ```
 
-插件优先调用 `context.client.experimental.usage.limits()`，读取 `data.go`：
+只有当当前 provider 的 `integrationID === "opencode"`（绑定 OpenCode Console）时，插件才调用 `context.client.experimental.usage.limits()` 并读取 `data.go`：
 
 ```ts
 data.go = {
@@ -316,7 +316,7 @@ data.go = {
 
 这条路径复用 OpenCode Console credential，不需要额外 API key。
 
-如果没有 `data.go`（例如未登录 Console），插件回退到 Go API-key 接口：
+独立 `opencode-go` integration 不使用内置 Console 数据，而是走自己的 Go API-key 接口：
 
 ```text
 GET https://opencode.ai/zen/go/v1/usage
@@ -324,7 +324,7 @@ Authorization: Bearer <token>
 User-Agent: OpenCode-Statusline/0.1
 ```
 
-回退凭据来自 V2 credential store 或 `OPENCODE_API_KEY`。
+该路径只接受 `opencode-go`/`opencodego` integration 的 key 或 `OPENCODE_API_KEY`。Console OAuth/key 不会被发送到这个 endpoint。
 
 响应结构：
 

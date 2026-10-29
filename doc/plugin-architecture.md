@@ -140,8 +140,8 @@ V2 的 `streamed` 是 provider 响应体结束时间，不是首 token 时间，
 ### `/quota`
 
 - 解析当前 route/session/model/provider。
-- OpenCode Go 优先调用 `client.experimental.usage.limits()`，读取 `data.go`。
-- 没有内置 Go 数据时回退到 `collectProviderUsage()`。
+- 绑定 OpenCode Console integration 的 Go provider 调用 `client.experimental.usage.limits()`，读取 `data.go`。
+- 独立 `opencode-go` integration 不读取内置 Console 数据，直接使用自己的 key collector。
 - 其他 provider 使用 collector。
 - dialog 用 `scrollbox` 限制高度。
 - `/quota` 不写入对话。
@@ -171,7 +171,7 @@ V2 的 `streamed` 是 provider 响应体结束时间，不是首 token 时间，
 
 不再读取 `auth.json`。OpenAI OAuth 只接受 `openai`/`codex`/`chatgpt` integration，避免把 OpenCode Console token 发到 ChatGPT endpoint。
 
-OpenCode Go 使用内置 `usage.limits` 时不需要额外 API key；回退 collector 使用 `OPENCODE_API_KEY` 或 Go credential。
+OpenCode Go 使用内置 `usage.limits` 时不需要额外 API key，但只适用于 `integrationID === "opencode"` 的 Console provider。独立 `opencode-go` integration 使用 `OPENCODE_API_KEY` 或该 integration 的 key，不会读取 Console credential。
 
 ## 构建
 

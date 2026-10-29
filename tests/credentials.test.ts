@@ -108,15 +108,14 @@ describe("V2 credential resolution", () => {
     });
   });
 
-  it("treats OAuth access tokens as API credentials for fallback collectors", () => {
+  it("does not use OAuth access tokens as generic API credentials", () => {
     const credential = resolveApiCredential({
       env: [],
       credentials: [oauthEntry({ integrationID: "opencode", access: "oauth-access", active: true })],
       integrationIDs: ["opencode"]
     });
 
-    expect(credential?.token).toBe("oauth-access");
-    expect(credential?.source.type).toBe("credential");
+    expect(credential).toBeUndefined();
   });
 
   it("resolves OAuth metadata account ids", () => {

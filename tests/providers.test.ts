@@ -160,7 +160,7 @@ describe("provider collection", () => {
 
     const report = await collectProviderUsage({
       providerID: "opencodego",
-      credentials: [keyCredential("opencode", "saved-go-key")],
+      credentials: [keyCredential("opencode-go", "saved-go-key")],
       force: true
     });
 
@@ -168,6 +168,37 @@ describe("provider collection", () => {
     expect(report.ok).toBe(true);
     expect(report.auth).toBe("credential:saved-go-key");
     expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(5);
+  });
+
+  it("does not fall back to another integration's credential when the provider is explicitly bound elsewhere", async () => {
+    process.env.DEEPSEEK_API_KEY = "deepseek-env";
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const report = await collectProviderUsage({
+      providerID: "deepseek",
+      providerInfo: { id: "deepseek", integrationID: "opencode" },
+      credentials: [
+        keyCredential("opencode", "console-key"),
+        keyCredential("deepseek", "deepseek-key")
+      ],
+      force: true
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(report.ok).toBe(false);
+  });
+
+  it("does not send a Zhipu key to the Z.ai endpoint", async () => {
+    delete process.env.ZAI_API_KEY;
+    delete process.env.ZAI_CODING_PLAN_API_KEY;
+    process.env.ZHIPU_API_KEY = "zhipu-key";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
+    const report = await collectProviderUsage({
+      providerID: "zai",
+      force: true
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(report.ok).toBe(false);
   });
 
   it("does not send an OpenCode Console OAuth token to the ChatGPT endpoint", async () => {
@@ -183,7 +214,21 @@ describe("provider collection", () => {
     expect(report.error).toContain("No OpenAI OAuth credential");
   });
 
-  it("classifies OpenAI windows by duration rather than response position", async () => {    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+  it("does not fall back to OpenAI OAuth when the provider is bound to another integration", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const report = await collectProviderUsage({
+      providerID: "openai",
+      providerInfo: { id: "openai", integrationID: "opencode" },
+      credentials: [oauthCredential("openai", "openai-access")],
+      force: true
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(report.ok).toBe(false);
+  });
+
+  it("classifies OpenAI windows by duration rather than response position", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
         plan_type: "business",
         rate_limit: {

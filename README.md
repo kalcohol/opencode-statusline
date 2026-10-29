@@ -64,7 +64,7 @@ ${XDG_CONFIG_HOME:-~/.config}/opencode/cli.json
 
 ### `/quota`
 
-显示当前 provider 的 quota/balance。OpenCode Go 优先复用内置 `usage.limits`，没有 Console 数据时回退到 Go API key。
+显示当前 provider 的 quota/balance。OpenCode Go 分两种：绑定 OpenCode Console integration 时复用内置 `usage.limits`；独立 `opencode-go` integration 使用自己的 API key，不读取 Console 数据。
 
 `/quota` 与内置 `/usage` 的区别：
 
@@ -114,7 +114,7 @@ repo | branch | git_diff_stats | quota_5h | quota_weekly | provider_balance
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | 模型调用用 API key；usage 需要 `XIAOMI_MIMO_SESSION_COOKIE` |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` 或 credential |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` 或 credential |
-| OpenCode Go | `opencode-go`, `opencodego` | 优先内置 Console usage；回退 `OPENCODE_API_KEY` 或 credential |
+| OpenCode Go | `opencode-go`, `opencodego` | Console integration 用内置 usage；独立 Go integration 只用自身 key / `OPENCODE_API_KEY` |
 | OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode credential store 中的 OAuth |
 
 凭据解析顺序：

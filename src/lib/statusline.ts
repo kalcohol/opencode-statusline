@@ -133,24 +133,17 @@ export function lastAssistantWithUsage(
 export function contextUsage(
   messages: readonly SessionMessageInfo[],
   models: readonly ModelInfo[] | undefined,
-  model: ModelRefLike | undefined,
   boundary?: string
 ): { used: number; limit?: number } | undefined {
   const last = lastAssistantWithUsage(messages, boundary);
   if (!last) return undefined;
   const used = tokenTotal(last.tokens);
   if (used <= 0) return undefined;
-  const modelInfo =
-    models?.find(
-      (item) =>
-        item.providerID === last.model.providerID &&
-        (item.id === last.model.id || item.modelID === last.model.id)
-    ) ??
-    models?.find(
-      (item) =>
-        item.providerID === model?.providerID &&
-        (item.id === model?.modelID || item.modelID === model?.modelID)
-    );
+  const modelInfo = models?.find(
+    (item) =>
+      item.providerID === last.model.providerID &&
+      (item.id === last.model.id || item.modelID === last.model.id)
+  );
   return { used, limit: modelInfo?.limit.context };
 }
 
@@ -210,7 +203,6 @@ export function generationMetrics(
 export function buildStatuslineSnapshot(input: {
   messages: readonly SessionMessageInfo[];
   models: readonly ModelInfo[] | undefined;
-  model: ModelRefLike | undefined;
   sessions: readonly SessionInfo[];
   session?: SessionInfo;
   repo?: string;
@@ -220,7 +212,7 @@ export function buildStatuslineSnapshot(input: {
   agentStatus?: string;
   quotaReport?: UsageReport;
 }): StatuslineSnapshot {
-  const usage = contextUsage(input.messages, input.models, input.model, input.session?.revert?.messageID);
+  const usage = contextUsage(input.messages, input.models, input.session?.revert?.messageID);
   return {
     repo: input.repo,
     branch: input.branch,

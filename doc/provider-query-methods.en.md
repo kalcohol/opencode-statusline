@@ -27,7 +27,7 @@ OAuth providers only read OAuth tokens from the V2 credential store. The plugin 
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | `XIAOMI_MIMO_SESSION_COOKIE` for usage; `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY` for model calls | plan/compensation/monthly credits quota, credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance, availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label, remaining limit, usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | built-in `usage.limits` first; `OPENCODE_API_KEY` or credential fallback | 5h/weekly/monthly subscription quota |
+| OpenCode Go | `opencode-go`, `opencodego` | Console integration uses built-in `usage.limits`; standalone Go integration uses only its own key / `OPENCODE_API_KEY` | 5h/weekly/monthly subscription quota |
 | OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | V2 credential store OAuth entry | ChatGPT plan, 5h/weekly/monthly quota, code review quota, credits |
 | OpenCode Zen | `opencode` | N/A | use built-in `/usage` for Console limits |
 
@@ -172,7 +172,7 @@ Response shape:
 }
 ```
 
-The generic `minimax` provider uses the international endpoint; only explicit CN aliases use the China endpoint. The implementation selects the `MiniMax-M*` wildcard row first, then a row matching the current model id, then the first row. It treats `*_usage_count` as used count.
+The generic `minimax` provider uses the international endpoint; only explicit CN aliases use the China endpoint. The implementation selects the `MiniMax-M*` wildcard row first, then a row matching the current model id, then the first row. The two endpoints use opposite `*_usage_count` semantics: **international reports remaining**, **China reports used**. The plugin converts international remaining counts to used (`used = total - remaining`).
 
 | Response fields | Usage window |
 | --- | --- |
@@ -304,7 +304,7 @@ The OpenCode V2 built-in usage service already exposes Go limits:
 GET /api/experimental/usage/limits
 ```
 
-The plugin first calls `context.client.experimental.usage.limits()` and reads `data.go`:
+Only when the current provider has `integrationID === "opencode"` (bound to OpenCode Console) does the plugin call `context.client.experimental.usage.limits()` and read `data.go`:
 
 ```ts
 data.go = {
@@ -316,7 +316,7 @@ data.go = {
 
 This path reuses the OpenCode Console credential and needs no extra API key.
 
-When `data.go` is unavailable (for example, no Console sign-in), the plugin falls back to the Go API-key endpoint:
+A standalone `opencode-go` integration does not use built-in Console data; it uses its own Go API-key endpoint:
 
 ```text
 GET https://opencode.ai/zen/go/v1/usage
@@ -324,7 +324,7 @@ Authorization: Bearer <token>
 User-Agent: OpenCode-Statusline/0.1
 ```
 
-Fallback credentials come from the V2 credential store or `OPENCODE_API_KEY`.
+That path only accepts an `opencode-go`/`opencodego` integration key or `OPENCODE_API_KEY`. Console OAuth/key credentials are never sent to this endpoint.
 
 Response shape:
 

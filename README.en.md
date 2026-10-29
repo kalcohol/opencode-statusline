@@ -62,7 +62,7 @@ Direct arguments are also supported:
 
 ### `/quota`
 
-Show the current provider's quota/balance. OpenCode Go prefers the built-in `usage.limits` data and falls back to a Go API key when Console data is unavailable.
+Show the current provider's quota/balance. OpenCode Go has two paths: a provider bound to the OpenCode Console integration uses built-in `usage.limits`; a standalone `opencode-go` integration uses its own API key and does not read Console data.
 
 - `/quota`: third-party coding plan/provider quota (Z.ai, Kimi, MiniMax, MiMo, DeepSeek, OpenRouter, OpenAI OAuth) plus an OpenCode Go convenience view.
 - `/usage`: built-in OpenCode Console workspace/model limits and Go limits.
@@ -110,7 +110,7 @@ Duplicate fields remain available but are omitted from defaults.
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | API key for models; usage requires `XIAOMI_MIMO_SESSION_COOKIE` |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` or credential |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` or credential |
-| OpenCode Go | `opencode-go`, `opencodego` | built-in Console usage first; `OPENCODE_API_KEY` or credential fallback |
+| OpenCode Go | `opencode-go`, `opencodego` | Console integration uses built-in usage; standalone Go integration uses only its own key / `OPENCODE_API_KEY` |
 | OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OAuth in the V2 credential store |
 
 Credential order:

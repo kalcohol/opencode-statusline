@@ -193,12 +193,16 @@ function resolveProviderApiCredential(
   providerIDs: readonly string[],
   authKeys: readonly string[] = []
 ) {
+  const allowed = [...providerIDs, ...authKeys];
+  const integrationID = input.providerInfo?.integrationID;
+  if (integrationID && !allowed.includes(integrationID)) return undefined;
   return resolveApiCredential({
     env,
     credentials: input.credentials,
-    integrationIDs: [input.providerInfo?.integrationID, ...providerIDs, ...authKeys].filter(
-      (id): id is string => Boolean(id)
-    )
+    integrationIDs: [
+      ...(integrationID ? [integrationID] : []),
+      ...allowed
+    ].filter((id): id is string => Boolean(id))
   });
 }
 
@@ -397,7 +401,7 @@ async function queryZaiLike(input: {
     input,
     input.zhipu
       ? ["ZHIPU_API_KEY", "ZHIPU_CODING_PLAN_API_KEY"]
-      : ["ZAI_API_KEY", "ZAI_CODING_PLAN_API_KEY", "ZHIPU_API_KEY"],
+      : ["ZAI_API_KEY", "ZAI_CODING_PLAN_API_KEY"],
     providerIDs,
     input.zhipu
       ? ["zhipu-coding-plan", "zhipuai-coding-plan", "zhipuai"]
@@ -836,7 +840,7 @@ async function queryOpenCodeGo(input: {
     input,
     ["OPENCODE_API_KEY"],
     ["opencode-go", "opencodego"],
-    ["opencode", "opencode-go", "opencodego"]
+    ["opencode-go", "opencodego"]
   );
   if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
 
@@ -883,10 +887,16 @@ async function queryOpenAI(input: {
 }): Promise<UsageReport> {
   const integrationID = input.providerInfo?.integrationID;
   const allowedIntegrationIDs = ["openai", "codex", "chatgpt"];
+  if (integrationID && !allowedIntegrationIDs.includes(integrationID)) {
+    return errorReport({
+      ...input,
+      error: `Provider integration '${integrationID}' is not an OpenAI OAuth integration`
+    });
+  }
   const credential = resolveOAuthCredential({
     credentials: input.credentials,
     integrationIDs: [
-      ...(integrationID && allowedIntegrationIDs.includes(integrationID) ? [integrationID] : []),
+      ...(integrationID ? [integrationID] : []),
       ...allowedIntegrationIDs
     ]
   });

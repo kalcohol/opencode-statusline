@@ -140,8 +140,8 @@ V2 `streamed` is the provider response body end, not first-token time, so the pl
 ### `/quota`
 
 - Resolves the current route/session/model/provider.
-- OpenCode Go first calls `client.experimental.usage.limits()` and reads `data.go`.
-- Falls back to `collectProviderUsage()` when built-in Go data is unavailable.
+- A Go provider bound to the OpenCode Console integration calls `client.experimental.usage.limits()` and reads `data.go`.
+- A standalone `opencode-go` integration does not read built-in Console data; it uses its own key collector.
 - Other providers use collectors.
 - The dialog uses `scrollbox` for height.
 - Never writes to the conversation.
@@ -171,7 +171,7 @@ Credential order:
 
 `auth.json` is no longer read. OpenAI OAuth only accepts `openai`/`codex`/`chatgpt` integrations, so an OpenCode Console token cannot be sent to the ChatGPT endpoint.
 
-OpenCode Go uses built-in `usage.limits` without an extra API key; the fallback collector uses `OPENCODE_API_KEY` or a Go credential.
+OpenCode Go uses built-in `usage.limits` without an extra API key only when `integrationID === "opencode"`. A standalone `opencode-go` integration uses `OPENCODE_API_KEY` or its own integration key and never reads Console credentials.
 
 ## Build
 

@@ -59,7 +59,11 @@ describe("quota loading", () => {
     });
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
-    const report = await loadQuotaReport(context, { providerID: "opencode-go" }, { force: true });
+    const report = await loadQuotaReport(
+      context,
+      { providerID: "opencode-go", providerInfo: { id: "opencode-go", integrationID: "opencode" } },
+      { force: true }
+    );
 
     expect(context.client.experimental.usage.limits).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -72,6 +76,40 @@ describe("quota loading", () => {
     });
     expect(findUsageWindow(report, "weekly")?.usedPercent).toBe(34);
     expect(findUsageWindow(report, "monthly")?.usedPercent).toBe(56);
+  });
+
+  it("keeps a direct Go integration on its own API key instead of Console data", async () => {
+    process.env.OPENCODE_API_KEY = "go-key";
+    const context = contextWith({
+      limits: {
+        data: {
+          workspace: { id: "workspace", usageURL: "https://opencode.ai" },
+          go: {
+            rolling: { percent: 99, limited: false, resetsAt: 1_000 },
+            weekly: { percent: 99, limited: false, resetsAt: 2_000 },
+            monthly: { percent: 99, limited: false, resetsAt: 3_000 }
+          },
+          budgets: []
+        }
+      }
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        usage: {
+          rolling: { status: "ok", percent: 7, resetsAt: "2026-08-19T01:00:00.000Z" }
+        }
+      })
+    );
+
+    const report = await loadQuotaReport(
+      context,
+      { providerID: "opencode-go", providerInfo: { id: "opencode-go", integrationID: "opencode-go" } },
+      { force: true }
+    );
+
+    expect(context.client.experimental.usage.limits).not.toHaveBeenCalled();
+    expect(report.auth).toBe("env:OPENCODE_API_KEY");
+    expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(7);
   });
 
   it("falls back to the API-key collector when Console has no Go data", async () => {
@@ -88,7 +126,11 @@ describe("quota loading", () => {
       )
     );
 
-    const report = await loadQuotaReport(context, { providerID: "opencode-go" }, { force: true });
+    const report = await loadQuotaReport(
+      context,
+      { providerID: "opencode-go", providerInfo: { id: "opencode-go", integrationID: "opencode" } },
+      { force: true }
+    );
 
     expect(report.ok).toBe(true);
     expect(report.auth).toBe("env:OPENCODE_API_KEY");
@@ -113,6 +155,32 @@ describe("quota loading", () => {
     expect(second.ok).toBe(true);
     expect(second.balances[0]?.value).toBe("$10.00");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not send a Console credential to the Go fallback endpoint", async () => {
+    delete process.env.OPENCODE_API_KEY;
+    const context = contextWith({
+      limits: { data: null },
+      credentials: [
+        {
+          id: "console",
+          integrationID: "opencode",
+          label: "Console key",
+          active: true,
+          value: { type: "key", key: "console-key" }
+        }
+      ]
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const report = await loadQuotaReport(
+      context,
+      { providerID: "opencode-go", providerInfo: { id: "opencode-go", integrationID: "opencode" } },
+      { force: true }
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(report.ok).toBe(false);
   });
 
   it("does not call the built-in Go endpoint for other providers", async () => {

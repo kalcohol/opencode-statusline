@@ -210,7 +210,6 @@ export function Statusline(props: {
       buildStatuslineSnapshot({
         messages: messages(),
         models: models(),
-        model: model(),
         sessions: sessions(),
         session: session(),
         repo: statuslineRepoName(session(), location()?.directory),
