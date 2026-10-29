@@ -120,13 +120,15 @@ repo | branch | git_diff_stats | quota_5h | quota_weekly | provider_balance
 
 context/cost/subagent/agent status 等字段仍可选，但默认关闭，避免和内置 footer 重复。
 
-`generation_metrics` 使用当前 turn 的 assistant steps：
+`generation_metrics` 使用当前 session 当前 turn 的 assistant steps：
 
 ```text
 tokensPerSecond = sum(output + reasoning) / sum(streamed - created)
 ```
 
 V2 的 `streamed` 是 provider 响应体结束时间，不是首 token 时间，因此不再显示 TTFT。
+
+`family_generation` 默认关闭。它把当前 session 和其 subagent 的 `[created, streamed]` 区间做 wall-clock union，再按 `sum(output + reasoning) / union` 计算 family throughput；并发 subagent 的重叠时间只算一次。消息未同步或 turn 归属不明确时省略该字段。
 
 ## 命令
 

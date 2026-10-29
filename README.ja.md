@@ -78,7 +78,8 @@ OpenCode を再起動してください。TUI-only パッケージなので `ope
 | `context_remaining` | 残りコンテキスト | なし |
 | `context_length` | コンテキスト上限 | なし |
 | `context_window` | 使用/上限 | あり |
-| `generation_metrics` | 現在 turn の生成速度 `gen 42 tok/s` | なし |
+| `generation_metrics` | 現在 session の turn 生成速度 `gen 42 tok/s` | なし |
+| `family_generation` | 現在 session + 実行中 subagent の wall-clock union 速度 `family gen 42 tok/s`、デフォルト無効 | なし |
 | `subagent_status` | 実行中 subagent 数；完了後は `sub N done` を短時間表示（速度があれば併記） | 実行中の数のみ |
 | `agent_status` | メイン session の実行状態 | あり（spinner） |
 | `quota_5h` | provider 5h quota 使用率 | Console/Go のみ |
@@ -96,7 +97,9 @@ repo | branch | git_diff_stats | quota_5h | quota_weekly | provider_balance
 
 重複フィールドは選択可能ですが、デフォルトには含めません。
 
-`generation_metrics` は V2 の step 単位 `streamed - created` を使うため、provider-active の生成速度のみです。V2 には信頼できる text part の初回 token timestamp がないため、TTFT は表示しません。
+`generation_metrics` は現在 session の V2 step 単位 `streamed - created` を使います。V2 には信頼できる text part の初回 token timestamp がないため、TTFT は表示しません。
+
+`family_generation` はデフォルト無効です。現在 session と subagent の `[created, streamed]` 区間を wall-clock union するため、並行 subagent の重複時間を二重計上しません。メッセージや turn 归属が不完全な場合は省略します。
 
 ## Providers
 

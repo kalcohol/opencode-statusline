@@ -82,7 +82,8 @@ ${XDG_CONFIG_HOME:-~/.config}/opencode/cli.json
 | `context_remaining` | 上下文剩余 | 否 |
 | `context_length` | 上下文上限 | 否 |
 | `context_window` | 已用/总上下文 | 是（tokens + %） |
-| `generation_metrics` | 当前 turn 的生成速度 `gen 42 tok/s` | 否 |
+| `generation_metrics` | 当前 session 当前 turn 的生成速度 `gen 42 tok/s` | 否 |
+| `family_generation` | 当前 session + 活跃 subagents 的 wall-clock union 速度 `family gen 42 tok/s`，默认关闭 | 否 |
 | `subagent_status` | running subagent 数量；完成后短暂显示 `sub N done`，有数据时带速度 | 是（仅 running 数量） |
 | `agent_status` | 主 session 是否 running | 是（spinner） |
 | `quota_5h` | provider 5h quota 使用百分比 | 仅 Console/Go |
@@ -100,7 +101,9 @@ repo | branch | git_diff_stats | quota_5h | quota_weekly | provider_balance
 
 内置 footer 已经显示 context/cost/subagent 时，再启用重复字段会出现两份数字；这些字段仍保留为可选。
 
-`generation_metrics` 使用 v2 的 step 级 `streamed - created` 计算 provider-active 生成速度，不包含 TTFT。v2 没有可靠的 text part 首 token 时间，因此不再伪造 TTFT。
+`generation_metrics` 使用 v2 的 step 级 `streamed - created` 计算当前 session 的 provider-active 生成速度，不包含 TTFT。
+
+`family_generation` 默认关闭。它把当前 session 与 subagent 的 `[created, streamed]` 区间做 wall-clock union，因此并发 subagent 不会重复计算重叠时间；消息不完整或 turn 归属不明确时省略。
 
 ## 支持的 Providers
 

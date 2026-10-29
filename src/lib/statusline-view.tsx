@@ -5,6 +5,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 import type { UsageReport } from "./providers.js";
 import {
   buildStatuslineSnapshot,
+  familyGenerationMetrics,
   generationMetricsAfter,
   hasVcsProvider,
   renderStatuslineParts,
@@ -43,6 +44,8 @@ function segmentColor(theme: Context["theme"], part: StatuslinePart) {
     case "context_window":
       return theme.hue.accent[400];
     case "generation_metrics":
+      return theme.text.feedback.info.base;
+    case "family_generation":
       return theme.text.feedback.info.base;
     case "subagent_status":
     case "agent_status":
@@ -130,6 +133,22 @@ export function Statusline(props: {
   const wantDiff = createMemo(() => props.fields.includes("git_diff_stats"));
   const wantVcs = createMemo(() => wantDiff() || props.fields.includes("branch"));
   const wantQuota = createMemo(() => props.fields.some((field) => QUOTA_FIELDS.includes(field)));
+  const wantFamily = createMemo(() => props.fields.includes("family_generation"));
+  const familySynced = new Set<string>();
+  const familyGeneration = createMemo(() => {
+    if (!wantFamily()) return undefined;
+    return familyGenerationMetrics({
+      parentMessages: messages(),
+      parentBoundary: session()?.revert?.messageID,
+      parentRunning: props.context.data.session.status(props.sessionID) === "running",
+      children: sessions()
+        .filter((item) => item.id !== props.sessionID)
+        .map((item) => ({
+          messages: props.context.data.session.message.list(item.id),
+          boundary: item.revert?.messageID
+        }))
+    });
+  });
   const visibleGitDiff = createMemo(() => {
     const value = gitDiff();
     return value?.key === locationKey() ? value.value : undefined;
@@ -147,6 +166,20 @@ export function Statusline(props: {
     const target = location();
     if (!target) return;
     void props.context.data.location.vcs.sync(target).catch(() => undefined);
+  });
+
+  createEffect(() => {
+    if (!wantFamily()) return;
+    for (const item of sessions()) {
+      if (item.id === props.sessionID) continue;
+      if (props.context.data.session.message.list(item.id).length > 0) continue;
+      if (familySynced.has(item.id)) continue;
+      familySynced.add(item.id);
+      void props.context.data.session.message
+        .sync(item.id)
+        .then(() => setRefreshTick((value) => value + 1))
+        .catch(() => undefined);
+    }
   });
 
   createEffect(() => {
@@ -205,6 +238,7 @@ export function Statusline(props: {
     subagentDoneVersion += 1;
     executionStarts.clear();
     doneSessions.clear();
+    familySynced.clear();
     if (subagentDoneTimer) clearTimeout(subagentDoneTimer);
     subagentDoneTimer = undefined;
     setSubagentDone({ count: 0 });
@@ -294,6 +328,7 @@ export function Statusline(props: {
     subagentDoneVersion += 1;
     executionStarts.clear();
     doneSessions.clear();
+    familySynced.clear();
     if (subagentDoneTimer) clearTimeout(subagentDoneTimer);
     clearInterval(refreshInterval);
     for (const unsubscribe of unsubscribers) unsubscribe();
@@ -309,6 +344,7 @@ export function Statusline(props: {
         repo: statuslineRepoName(session(), location()?.directory),
         branch: vcs()?.branch.current,
         gitDiff: visibleGitDiff(),
+        familyGeneration: familyGeneration(),
         subagentCount: subagentCount(),
         subagentDoneCount: subagentDone().count || undefined,
         subagentDoneSpeed: subagentDone().speed,

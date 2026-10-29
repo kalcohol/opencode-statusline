@@ -11,6 +11,7 @@ export const STATUSLINE_FIELDS = [
   { id: "context_length", label: "Context length", aliases: ["context_limit", "ctx_limit", "ctx_max", "model_context", "window"] },
   { id: "context_window", label: "Context used/total", aliases: ["ctx_total", "context_total"] },
   { id: "generation_metrics", label: "Generation speed", aliases: ["speed", "generation_speed", "gen_speed", "tokens_per_second", "tps", "perf"] },
+  { id: "family_generation", label: "Family generation speed", aliases: ["family_speed", "family_gen", "family_tps"] },
   { id: "subagent_status", label: "Subagent status", aliases: ["subagent", "subagents", "sub"] },
   { id: "agent_status", label: "Main agent status", aliases: ["agent", "status"] },
   { id: "quota_5h", label: "5h quota", aliases: ["5h", "quota5h", "five_hour"] },

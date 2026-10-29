@@ -120,13 +120,15 @@ repo | branch | git_diff_stats | quota_5h | quota_weekly | provider_balance
 
 context/cost/subagent/agent status は選択可能ですが、重複を避けるためデフォルトでは無効です。
 
-`generation_metrics` は現在 turn の assistant steps を使います。
+`generation_metrics` は現在 session の turn の assistant steps を使います。
 
 ```text
 tokensPerSecond = sum(output + reasoning) / sum(streamed - created)
 ```
 
 V2 の `streamed` は provider response body の終了時刻であり、初回 token 時刻ではないため TTFT は表示しません。
+
+`family_generation` はデフォルト無効です。現在 session と subagent の `[created, streamed]` 区間を wall-clock union し、`sum(output + reasoning) / union` で family throughput を計算します。並行 subagent の重複時間は 1 回だけ数えます。メッセージ未同期や turn 归属が不明な場合は省略します。
 
 ## コマンド
 

@@ -21,6 +21,7 @@ type Settings = {
 
 type UpdateSettings = (mutation: (draft: Settings) => void) => Promise<void>;
 type FieldsAccessor = () => readonly StatuslineFieldID[];
+type PersistFields = (fields: readonly StatuslineFieldID[]) => Promise<unknown>;
 
 function fieldOptions(fields: readonly StatuslineFieldID[]) {
   return STATUSLINE_FIELDS.map((field) => {
@@ -63,15 +64,16 @@ async function saveFields(
 
 async function openStatuslineDialog(
   context: Context,
-  update: UpdateSettings,
+  persist: PersistFields,
   fields: FieldsAccessor
 ): Promise<void> {
-  let current: StatuslineFieldID | undefined = fields()[0];
+  let draft = [...fields()];
+  let current: StatuslineFieldID | undefined = draft[0];
   while (true) {
     const selected: StatuslineFieldID | undefined = await context.ui.dialog.select<StatuslineFieldID>({
       title: "Statusline fields",
       placeholder: "Search fields",
-      options: fieldOptions(fields()),
+      options: fieldOptions(draft),
       current,
       actions: [
         {
@@ -79,7 +81,8 @@ async function openStatuslineDialog(
           title: "Clear all",
           selection: "none",
           onTrigger: () => {
-            void saveFields(context, update, []);
+            draft = [];
+            void persist(draft);
             context.ui.dialog.clear();
           }
         }
@@ -87,25 +90,26 @@ async function openStatuslineDialog(
     });
     if (!selected) return;
     current = selected;
-    if (!(await saveFields(context, update, toggleStatuslineField(fields(), selected)))) return;
+    draft = toggleStatuslineField(draft, selected);
+    void persist(draft);
   }
 }
 
 async function configureStatusline(
   context: Context,
-  update: UpdateSettings,
+  persist: PersistFields,
   fields: FieldsAccessor,
   input: string | undefined
 ): Promise<void> {
   const raw = input?.trim();
   if (!raw) {
-    await openStatuslineDialog(context, update, fields);
+    await openStatuslineDialog(context, persist, fields);
     return;
   }
 
   const parsed = parseStatuslineFieldArguments(raw);
   if (parsed.clear) {
-    if (await saveFields(context, update, [])) {
+    if (await persist([])) {
       context.ui.toast.show({ message: "Statusline cleared", variant: "success" });
     }
     return;
@@ -117,7 +121,7 @@ async function configureStatusline(
     });
     return;
   }
-  if (!(await saveFields(context, update, parsed.fields))) return;
+  if (!(await persist(parsed.fields))) return;
   if (parsed.unknown.length) {
     context.ui.toast.show({
       message: `Skipped unknown fields: ${parsed.unknown.join(", ")}`,
@@ -136,12 +140,17 @@ export default Plugin.define({
       }
     });
     const fields: FieldsAccessor = () => normalizeStatuslineFields(settings.fields);
+    let saveQueue: Promise<unknown> = Promise.resolve();
+    const persist: PersistFields = (next) => {
+      saveQueue = saveQueue.then(() => saveFields(context, update, next));
+      return saveQueue;
+    };
     if (
       settings.version !== STATUSLINE_CONFIG_VERSION ||
       !Array.isArray(settings.fields) ||
       !sameFields(fields(), settings.fields)
     ) {
-      void saveFields(context, update, fields());
+      void persist(fields());
     }
 
     context.ui.slot({
@@ -171,7 +180,7 @@ export default Plugin.define({
           palette: true,
           slash: { name: "statusline", arguments: true },
           run: (input) => {
-            void configureStatusline(context, update, fields, input).catch((error) => {
+            void configureStatusline(context, persist, fields, input).catch((error) => {
               context.ui.toast.show({
                 variant: "error",
                 message: `Statusline command failed: ${errorMessage(error)}`

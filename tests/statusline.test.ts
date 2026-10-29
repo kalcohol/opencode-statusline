@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { UsageReport } from "../src/lib/providers.js";
 import {
   buildStatuslineSnapshot,
+  familyGenerationMetrics,
   generationMetrics,
   generationMetricsAfter,
   hasVcsProvider,
@@ -144,6 +145,133 @@ describe("statusline snapshot rendering", () => {
       "2K used",
       "cost $0.05"
     ]);
+  });
+
+  it("uses wall-clock union for family generation speed", () => {
+    const user = (id: string, created: number) =>
+      ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
+    const parentMessages = [
+      user("parent-user", 0),
+      assistant({ id: "parent-assistant", created: 0, streamed: 10_000, completed: 10_100, tokens: tokens(100, 100, 0) })
+    ];
+    const childMessages = [
+      user("child-user", 5_000),
+      assistant({ id: "child-assistant", created: 5_000, streamed: 15_000, completed: 15_100, tokens: tokens(100, 100, 0) })
+    ];
+
+    expect(
+      familyGenerationMetrics({
+        parentMessages,
+        children: [{ messages: childMessages }],
+        now: 20_000
+      })?.tokensPerSecond
+    ).toBeCloseTo(200 / 15, 2);
+
+    expect(
+      familyGenerationMetrics({
+        parentMessages,
+        children: [
+          {
+            messages: [
+              user("serial-user", 10_000),
+              assistant({ id: "serial-assistant", created: 10_000, streamed: 20_000, completed: 20_100, tokens: tokens(100, 100, 0) })
+            ]
+          }
+        ],
+        now: 25_000
+      })?.tokensPerSecond
+    ).toBe(10);
+  });
+
+  it("uses the last completed turn when idle markers trail the parent history", () => {
+    const user = (id: string, created: number) =>
+      ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
+    const idle = (id: string, created: number) =>
+      ({ id, type: "idle", time: { created } }) as unknown as SessionMessageInfo;
+    const parentMessages = [
+      user("old-user", 0),
+      assistant({ id: "old-assistant", created: 0, streamed: 5_000, completed: 5_100, tokens: tokens(100, 100, 0) }),
+      idle("old-idle", 5_500),
+      user("current-user", 10_000),
+      assistant({ id: "current-assistant", created: 10_000, streamed: 20_000, completed: 20_100, tokens: tokens(100, 100, 0) }),
+      idle("current-idle", 20_500)
+    ];
+
+    expect(
+      familyGenerationMetrics({
+        parentMessages,
+        children: [],
+        now: 25_000
+      })?.tokensPerSecond
+    ).toBe(10);
+  });
+
+  it("does not include child work that starts after a completed parent turn", () => {
+    const user = (id: string, created: number) =>
+      ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
+    const parentMessages = [
+      user("parent-user", 0),
+      assistant({ id: "parent-assistant", created: 0, streamed: 10_000, completed: 10_100, tokens: tokens(100, 100, 0) })
+    ];
+    const laterChildMessages = [
+      user("later-child-user", 12_000),
+      assistant({ id: "later-child-assistant", created: 12_000, streamed: 17_000, completed: 17_100, tokens: tokens(100, 100, 0) })
+    ];
+
+    expect(
+      familyGenerationMetrics({
+        parentMessages,
+        children: [{ messages: laterChildMessages }],
+        now: 25_000
+      })?.tokensPerSecond
+    ).toBe(10);
+  });
+
+  it("does not mix the previous parent turn while a new turn has no assistant yet", () => {
+    const user = (id: string, created: number) =>
+      ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
+    const idle = (id: string, created: number) =>
+      ({ id, type: "idle", time: { created } }) as unknown as SessionMessageInfo;
+    const parentMessages = [
+      user("old-user", 0),
+      assistant({ id: "old-assistant", created: 0, streamed: 10_000, completed: 10_100, tokens: tokens(100, 100, 0) }),
+      idle("old-idle", 10_500),
+      user("new-user", 12_000)
+    ];
+    const childMessages = [
+      user("child-user", 13_000),
+      assistant({ id: "child-assistant", created: 13_000, streamed: 18_000, completed: 18_100, tokens: tokens(100, 100, 0) })
+    ];
+
+    expect(
+      familyGenerationMetrics({
+        parentMessages,
+        parentRunning: true,
+        children: [{ messages: childMessages }],
+        now: 20_000
+      })
+    ).toBeUndefined();
+  });
+
+  it("excludes child turns from before the parent turn", () => {
+    const user = (id: string, created: number) =>
+      ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
+    const parentMessages = [
+      user("parent-user", 10_000),
+      assistant({ id: "parent-assistant", created: 10_000, streamed: 20_000, completed: 20_100, tokens: tokens(100, 100, 0) })
+    ];
+    const oldChildMessages = [
+      user("old-child-user", 0),
+      assistant({ id: "old-child-assistant", created: 0, streamed: 5_000, completed: 5_100, tokens: tokens(100, 100, 0) })
+    ];
+
+    expect(
+      familyGenerationMetrics({
+        parentMessages,
+        children: [{ messages: oldChildMessages }],
+        now: 25_000
+      })?.tokensPerSecond
+    ).toBe(10);
   });
 
   it("keeps the zero diff value for a clean repository", () => {
@@ -293,6 +421,19 @@ describe("statusline snapshot rendering", () => {
 
     expect(snapshot.contextUsed).toBe(1100);
     expect(snapshot.contextLimit).toBeUndefined();
+  });
+
+  it("renders family generation speed", () => {
+    const snapshot = buildStatuslineSnapshot({
+      messages: [],
+      models: [],
+      sessions: [session({ id: "root" })],
+      familyGeneration: { tokensPerSecond: 42 }
+    });
+
+    expect(renderStatuslineParts(snapshot, ["family_generation"])).toEqual([
+      { field: "family_generation", text: "family gen 42 tok/s" }
+    ]);
   });
 
   it("shows a transient subagent completion badge with speed", () => {

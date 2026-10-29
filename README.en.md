@@ -78,7 +78,8 @@ Show the current provider's quota/balance. OpenCode Go has two paths: a provider
 | `context_remaining` | Remaining context | no |
 | `context_length` | Context limit | no |
 | `context_window` | Used/total context | yes |
-| `generation_metrics` | Current turn generation speed `gen 42 tok/s` | no |
+| `generation_metrics` | Current session turn generation speed `gen 42 tok/s` | no |
+| `family_generation` | Current session + active subagents wall-clock union speed `family gen 42 tok/s`; off by default | no |
 | `subagent_status` | Running subagent count; briefly shows `sub N done` with speed when available | running count only |
 | `agent_status` | Main session running state | yes (spinner) |
 | `quota_5h` | Provider 5h quota percent | Console/Go only |
@@ -96,7 +97,9 @@ repo | branch | git_diff_stats | quota_5h | quota_weekly | provider_balance
 
 Duplicate fields remain available but are omitted from defaults.
 
-`generation_metrics` uses V2 step-level `streamed - created`, so it reports provider-active generation speed only. V2 has no reliable text-part first-token timestamp, so the plugin no longer reports a made-up TTFT.
+`generation_metrics` uses V2 step-level `streamed - created` for the current session only. V2 has no reliable text-part first-token timestamp, so the plugin does not report TTFT.
+
+`family_generation` is off by default. It unions the `[created, streamed]` intervals of the current session and subagents, so concurrent subagents do not double-count overlapping time. It is omitted when messages or turn attribution are incomplete.
 
 ## Providers
 

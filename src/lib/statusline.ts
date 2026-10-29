@@ -18,6 +18,17 @@ export type GenerationMetrics = {
   tokensPerSecond?: number;
 };
 
+type GenerationSample = {
+  start: number;
+  end: number;
+  tokens: number;
+};
+
+type TurnSamples = {
+  startMs: number;
+  samples: GenerationSample[];
+};
+
 export type TokenTotals = {
   input: number;
   output: number;
@@ -34,6 +45,7 @@ export type StatuslineSnapshot = {
   contextUsed?: number;
   contextLimit?: number;
   generation?: GenerationMetrics;
+  familyGeneration?: GenerationMetrics;
   subagentCount?: number;
   subagentDoneCount?: number;
   subagentDoneSpeed?: number;
@@ -211,6 +223,101 @@ export function generationMetricsAfter(
   return generationMetrics(messages.slice(index + 1));
 }
 
+function currentTurnSamples(
+  messages: readonly SessionMessageInfo[],
+  boundary?: string
+): TurnSamples | undefined {
+  const boundaryIndex = boundary ? messages.findIndex((message) => message.id === boundary) : -1;
+  if (boundary && boundaryIndex === -1) return undefined;
+  const limit = boundaryIndex === -1 ? messages.length : boundaryIndex;
+  const lastAssistantIndex = messages.findLastIndex(
+    (message, index) => index < limit && message.type === "assistant"
+  );
+  if (lastAssistantIndex === -1) return undefined;
+  const lastInputIndex = messages.findLastIndex(
+    (message, index) =>
+      index < limit && (message.type === "user" || message.type === "synthetic")
+  );
+  if (lastInputIndex > lastAssistantIndex) return undefined;
+  const compactionIndex = messages.findLastIndex(
+    (message, index) =>
+      index < limit && message.type === "compaction" && message.status === "completed"
+  );
+  if (compactionIndex > lastAssistantIndex) return undefined;
+  const end = lastAssistantIndex + 1;
+  const start = turnStartIndex(messages, end);
+  const steps = messages
+    .slice(start + 1, end)
+    .filter((message): message is SessionMessageAssistant => message.type === "assistant");
+  if (!steps.length) return undefined;
+
+  const samples: GenerationSample[] = [];
+  for (const step of steps) {
+    if (!step.tokens) return undefined;
+    const streamed = step.time.streamed;
+    if (streamed === undefined) return undefined;
+    samples.push({
+      start: step.time.created,
+      end: streamed,
+      tokens: step.tokens.output + step.tokens.reasoning
+    });
+  }
+
+  return {
+    startMs: start >= 0 ? messages[start].time.created : Math.min(...samples.map((sample) => sample.start)),
+    samples
+  };
+}
+
+function unionDuration(samples: readonly GenerationSample[]): number {
+  if (!samples.length) return 0;
+  const sorted = [...samples].sort((left, right) => left.start - right.start);
+  let duration = 0;
+  let start = sorted[0].start;
+  let end = sorted[0].end;
+  for (let index = 1; index < sorted.length; index += 1) {
+    const sample = sorted[index];
+    if (sample.start <= end) {
+      end = Math.max(end, sample.end);
+      continue;
+    }
+    duration += Math.max(0, end - start);
+    start = sample.start;
+    end = sample.end;
+  }
+  return duration + Math.max(0, end - start);
+}
+
+export function familyGenerationMetrics(input: {
+  parentMessages: readonly SessionMessageInfo[];
+  parentBoundary?: string;
+  children: ReadonlyArray<{ messages: readonly SessionMessageInfo[]; boundary?: string }>;
+  parentRunning?: boolean;
+  now?: number;
+}): GenerationMetrics | undefined {
+  const parent = currentTurnSamples(input.parentMessages, input.parentBoundary);
+  if (!parent) return undefined;
+  const now = input.now ?? Date.now();
+  const windowEnd = input.parentRunning
+    ? now
+    : Math.max(...parent.samples.map((sample) => sample.end));
+  const samples = [...parent.samples];
+
+  for (const child of input.children) {
+    const turn = currentTurnSamples(child.messages, child.boundary);
+    if (!turn) continue;
+    for (const sample of turn.samples) {
+      if (sample.end < parent.startMs || sample.start > windowEnd) continue;
+      samples.push(sample);
+    }
+  }
+
+  const tokens = samples.reduce((total, sample) => total + sample.tokens, 0);
+  const duration = unionDuration(samples);
+  if (tokens <= 0 || duration <= 0) return undefined;
+  return { tokensPerSecond: tokens / (duration / 1000) };
+}
+
 export function buildStatuslineSnapshot(input: {
   messages: readonly SessionMessageInfo[];
   models: readonly ModelInfo[] | undefined;
@@ -219,6 +326,7 @@ export function buildStatuslineSnapshot(input: {
   repo?: string;
   branch?: string;
   gitDiff?: GitDiffStats;
+  familyGeneration?: GenerationMetrics;
   subagentCount?: number;
   subagentDoneCount?: number;
   subagentDoneSpeed?: number;
@@ -233,6 +341,7 @@ export function buildStatuslineSnapshot(input: {
     contextUsed: usage?.used,
     contextLimit: usage?.limit,
     generation: generationMetrics(input.messages, input.session?.revert?.messageID),
+    familyGeneration: input.familyGeneration,
     subagentCount: input.subagentCount,
     subagentDoneCount: input.subagentDoneCount,
     subagentDoneSpeed: input.subagentDoneSpeed,
@@ -330,6 +439,10 @@ function fieldText(field: StatuslineFieldID, snapshot: StatuslineSnapshot): stri
         : `ctx ${formatTokenAmount(snapshot.contextUsed)}/${formatTokenAmount(snapshot.contextLimit)}`;
     case "generation_metrics":
       return generationMetricsText(snapshot.generation);
+    case "family_generation": {
+      const speed = snapshot.familyGeneration?.tokensPerSecond;
+      return speed === undefined ? undefined : `family gen ${formatTokensPerSecond(speed)} tok/s`;
+    }
     case "subagent_status":
       return subagentStatusText(snapshot);
     case "agent_status":

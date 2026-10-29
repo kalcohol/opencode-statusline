@@ -120,13 +120,15 @@ repo | branch | git_diff_stats | quota_5h | quota_weekly | provider_balance
 
 Context/cost/subagent/agent status remain available but are not default, to avoid duplicate numbers.
 
-`generation_metrics` uses the current turn's assistant steps:
+`generation_metrics` uses the current session turn's assistant steps:
 
 ```text
 tokensPerSecond = sum(output + reasoning) / sum(streamed - created)
 ```
 
 V2 `streamed` is the provider response body end, not first-token time, so the plugin does not report TTFT.
+
+`family_generation` is off by default. It unions the `[created, streamed]` intervals of the current session and its subagents, then computes family throughput as `sum(output + reasoning) / union`; overlapping concurrent subagent time is counted once. The field is omitted when messages are not synced or turn attribution is ambiguous.
 
 ## Commands
 
