@@ -110,6 +110,11 @@ async function loadBuiltinGoReport(
       const report = goReport({ target, info });
       if (!report) return { status: "no-data" };
       const now = Date.now();
+      if (builtinCache.size > 100) {
+        for (const [cachedKey, entry] of builtinCache) {
+          if (entry.staleUntil <= now) builtinCache.delete(cachedKey);
+        }
+      }
       builtinCache.set(key, {
         expiresAt: now + BUILTIN_CACHE_TTL_MS,
         staleUntil: now + BUILTIN_STALE_TTL_MS,

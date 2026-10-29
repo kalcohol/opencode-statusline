@@ -317,7 +317,8 @@ export function Statusline(props: {
     props.context.data.on("session.execution.failed", onFailed),
     props.context.data.on("session.execution.interrupted", onFailed),
     props.context.data.on("credential.updated", onCredential),
-    props.context.data.on("credential.switched", onCredential)
+    props.context.data.on("credential.switched", onCredential),
+    props.context.data.on("integration.updated", onCredential)
   ];
   const refreshInterval = setInterval(() => {
     if (wantDiff() || wantQuota()) setRefreshTick((value) => value + 1);
