@@ -36,6 +36,7 @@ export type UsageReport = {
   balances: UsageBalance[];
   items: UsageItem[];
   error?: string;
+  stale?: boolean;
 };
 
 export type ProviderInfoLike = {

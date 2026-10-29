@@ -106,7 +106,7 @@ V2 data is reactive, so the plugin no longer needs:
   - `session.execution.interrupted`
   - a 60 second interval while quota or git diff fields are enabled
 - Async results are guarded by key and version, so switching provider/location does not show the previous account's data.
-- Third-party provider collectors use a 30 second fresh cache and a 10 minute stale fallback. Built-in OpenCode Go usage is read each time.
+- Third-party provider collectors use a 30 second fresh cache and a 10 minute stale fallback; stale results are marked `Cache: stale`. Built-in OpenCode Go usage uses a 30 second fresh cache and a 5 minute stale fallback.
 
 ## Fields
 

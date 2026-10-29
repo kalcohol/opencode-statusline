@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PROVIDER_ADAPTERS, resolveProviderAdapter } from "../src/lib/providers.js";
+import { PROVIDER_ADAPTERS, resolveProviderAdapter } from "../src/lib/providers/registry.js";
 
 describe("provider adapter registry", () => {
   it("routes every alias to exactly one adapter", () => {

@@ -331,6 +331,21 @@ describe("statusline snapshot rendering", () => {
     expect(generationMetrics([user, first, second])?.tokensPerSecond).toBeCloseTo(277.78, 1);
   });
 
+  it("hides generation while a new turn has no assistant yet", () => {
+    const user = (id: string, created: number) =>
+      ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
+    const idle = (id: string, created: number) =>
+      ({ id, type: "idle", time: { created } }) as unknown as SessionMessageInfo;
+    const messages = [
+      user("old-user", 0),
+      assistant({ id: "old-assistant", created: 0, streamed: 5_000, completed: 5_100, tokens: tokens(100, 100, 0) }),
+      idle("old-idle", 5_500),
+      user("new-user", 10_000)
+    ];
+
+    expect(generationMetrics(messages)).toBeUndefined();
+  });
+
   it("computes generation speed only after an explicit execution boundary", () => {
     const user = (id: string, created: number) =>
       ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
@@ -395,9 +410,9 @@ describe("statusline snapshot rendering", () => {
       tokens: tokens(100, 800, 0)
     });
 
-    expect(generationMetrics([user("user-1", 100), first, user("user-2", 2000), second, boundary])?.tokensPerSecond).toBe(400);
+    expect(generationMetrics([user("user-1", 100), first, user("user-2", 2000), second, boundary.id])?.tokensPerSecond).toBe(400);
     expect(
-      generationMetrics([user("user-1", 100), first, user("user-2", 2000), second, boundary, idle("idle-future", 6000)])
+      generationMetrics([user("user-1", 100), first, user("user-2", 2000), second, boundary.id, idle("idle-future", 6000)])
         ?.tokensPerSecond
     ).toBe(400);
   });

@@ -27,10 +27,14 @@ describe("V2 TUI package boundary", () => {
     expect(pkg.private).toBe(true);
   });
 
-  it("uses the V2 plugin API while keeping OpenTUI on the host", () => {
-    expect(pkg.dependencies?.["@opencode/plugin"]).toMatch(/^\^2\./);
-    expect(pkg.dependencies?.["@opencode/client"]).toMatch(/^\^2\./);
+  it("uses the V2 plugin API while keeping host packages external", () => {
+    expect(pkg.dependencies?.["@opencode/plugin"]).toBeUndefined();
+    expect(pkg.dependencies?.["@opencode/client"]).toBeUndefined();
     expect(pkg.dependencies?.["@opencode-ai/plugin"]).toBeUndefined();
+    expect(pkg.devDependencies?.["@opencode/plugin"]).toMatch(/^\^2\./);
+    expect(pkg.devDependencies?.["@opencode/client"]).toMatch(/^\^2\./);
+    expect(pkg.peerDependencies?.["@opencode/plugin"]).toMatch(/^\^2\./);
+    expect(pkg.peerDependencies?.["@opencode/client"]).toMatch(/^\^2\./);
     expect(pkg.dependencies?.["@opentui/core"]).toBeUndefined();
     expect(pkg.dependencies?.["@opentui/solid"]).toBeUndefined();
     expect(pkg.peerDependencies?.["@opentui/core"]).toMatch(/0\.7\.0/);

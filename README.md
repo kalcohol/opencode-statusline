@@ -64,7 +64,7 @@ ${XDG_CONFIG_HOME:-~/.config}/opencode/cli.json
 
 ### `/quota`
 
-显示当前 provider 的 quota/balance。OpenCode Go 分两种：绑定 OpenCode Console integration 时复用内置 `usage.limits`；独立 `opencode-go` integration 使用自己的 API key，不读取 Console 数据。
+显示当前 provider 的 quota/balance。OpenCode Go 分两种：绑定 OpenCode Console integration 时复用内置 `usage.limits`；独立 `opencode-go` integration 使用自己的 API key，不读取 Console 数据。刷新失败时会显示 `Updated` 时间和 `Cache: stale` 标记，不会把旧缓存伪装成实时数据。
 
 `/quota` 与内置 `/usage` 的区别：
 

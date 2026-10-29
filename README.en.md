@@ -62,7 +62,7 @@ Direct arguments are also supported:
 
 ### `/quota`
 
-Show the current provider's quota/balance. OpenCode Go has two paths: a provider bound to the OpenCode Console integration uses built-in `usage.limits`; a standalone `opencode-go` integration uses its own API key and does not read Console data.
+Show the current provider's quota/balance. OpenCode Go has two paths: a provider bound to the OpenCode Console integration uses built-in `usage.limits`; a standalone `opencode-go` integration uses its own API key and does not read Console data. When a refresh fails, the dialog shows the `Updated` time and a `Cache: stale` marker instead of presenting old data as live.
 
 - `/quota`: third-party coding plan/provider quota (Z.ai, Kimi, MiniMax, MiMo, DeepSeek, OpenRouter, OpenAI OAuth) plus an OpenCode Go convenience view.
 - `/usage`: built-in OpenCode Console workspace/model limits and Go limits.

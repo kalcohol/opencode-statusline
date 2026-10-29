@@ -62,7 +62,7 @@ OpenCode を再起動してください。TUI-only パッケージなので `ope
 
 ### `/quota`
 
-現在の provider の quota/balance を表示します。OpenCode Go は 2 経路です。OpenCode Console integration に紐づく provider は組み込み `usage.limits` を使い、独立した `opencode-go` integration は自分の API key を使います（Console データは読みません）。
+現在の provider の quota/balance を表示します。OpenCode Go は 2 経路です。OpenCode Console integration に紐づく provider は組み込み `usage.limits` を使い、独立した `opencode-go` integration は自分の API key を使います（Console データは読みません）。refresh 失敗時は `Updated` 時刻と `Cache: stale` を表示し、古いデータを live として見せません。
 
 - `/quota`: サードパーティ provider の quota（Z.ai、Kimi、MiniMax、MiMo、DeepSeek、OpenRouter、OpenAI OAuth）+ OpenCode Go の簡易表示。
 - `/usage`: 組み込みの OpenCode Console workspace/model limits と Go limits。

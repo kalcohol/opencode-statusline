@@ -185,6 +185,11 @@ export function generationMetrics(
     (message, index) => index < limit && message.type === "assistant"
   );
   if (lastAssistantIndex === -1) return undefined;
+  const lastInputIndex = messages.findLastIndex(
+    (message, index) =>
+      index < limit && (message.type === "user" || message.type === "synthetic")
+  );
+  if (lastInputIndex > lastAssistantIndex) return undefined;
   const lastAssistant = messages[lastAssistantIndex];
   if (lastAssistant.type !== "assistant" || !lastAssistant.tokens) return undefined;
   const compactionIndex = messages.findLastIndex(

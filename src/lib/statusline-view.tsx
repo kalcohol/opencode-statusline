@@ -16,7 +16,8 @@ import {
   type StatuslinePart
 } from "./statusline.js";
 import type { StatuslineFieldID } from "./statusline-config.js";
-import { loadQuotaReport } from "./quota.js";
+import { clearQuotaCaches, loadQuotaReport } from "./quota.js";
+import { SubagentBadgeTracker } from "./subagent-badge.js";
 
 const QUOTA_FIELDS: readonly StatuslineFieldID[] = ["quota_5h", "quota_weekly", "provider_balance"];
 
@@ -94,8 +95,7 @@ export function Statusline(props: {
   const [subagentDone, setSubagentDone] = createSignal<{ count: number; speed?: number }>({ count: 0 });
   let subagentDoneTimer: ReturnType<typeof setTimeout> | undefined;
   let subagentDoneVersion = 0;
-  const executionStarts = new Map<string, string | undefined>();
-  const doneSessions = new Set<string>();
+  const badgeTracker = new SubagentBadgeTracker();
 
   const session = createMemo(() => props.context.data.session.get(props.sessionID));
   const messages = createMemo(() => props.context.data.session.message.list(props.sessionID));
@@ -236,8 +236,7 @@ export function Statusline(props: {
     if (sessionID === activeSessionID) return;
     activeSessionID = sessionID;
     subagentDoneVersion += 1;
-    executionStarts.clear();
-    doneSessions.clear();
+    badgeTracker.reset();
     familySynced.clear();
     if (subagentDoneTimer) clearTimeout(subagentDoneTimer);
     subagentDoneTimer = undefined;
@@ -257,30 +256,26 @@ export function Statusline(props: {
     const sessionID = event.data.sessionID;
     if (!isSubtreeSession(sessionID)) return;
     const messages = props.context.data.session.message.list(sessionID);
-    executionStarts.set(sessionID, messages.at(-1)?.id);
-    doneSessions.delete(sessionID);
+    badgeTracker.start(sessionID, messages.at(-1)?.id);
     subagentDoneVersion += 1;
   };
   const onSubagentDone = (event: { data: { sessionID: string } }) => {
     const sessionID = event.data.sessionID;
     if (!isSubtreeSession(sessionID)) return;
-    if (doneSessions.has(sessionID)) return;
-    doneSessions.add(sessionID);
-
-    const afterID = executionStarts.get(sessionID);
-    executionStarts.delete(sessionID);
+    const finished = badgeTracker.finish(sessionID);
+    if (!finished.counted) return;
 
     setSubagentDone((previous) => ({ count: previous.count + 1, speed: undefined }));
     if (subagentDoneTimer) clearTimeout(subagentDoneTimer);
     subagentDoneTimer = setTimeout(() => {
-      doneSessions.clear();
+      badgeTracker.clearDone();
       setSubagentDone({ count: 0 });
     }, 8_000);
 
-    if (afterID === undefined) return;
+    if (finished.afterID === undefined) return;
     const version = ++subagentDoneVersion;
     const speed = () =>
-      generationMetricsAfter(props.context.data.session.message.list(sessionID), afterID)
+      generationMetricsAfter(props.context.data.session.message.list(sessionID), finished.afterID!)
         ?.tokensPerSecond;
     const immediate = speed();
     if (immediate !== undefined) {
@@ -303,11 +298,12 @@ export function Statusline(props: {
     onSubagentDone(event);
   };
   const onFailed = (event: { data: { sessionID: string } }) => {
-    executionStarts.delete(event.data.sessionID);
+    badgeTracker.fail(event.data.sessionID);
     onExecution(event);
   };
   const onCredential = () => {
     quotaVersion += 1;
+    clearQuotaCaches();
     setQuotaReport(undefined);
     setRefreshTick((value) => value + 1);
   };
@@ -326,8 +322,7 @@ export function Statusline(props: {
     diffVersion += 1;
     quotaVersion += 1;
     subagentDoneVersion += 1;
-    executionStarts.clear();
-    doneSessions.clear();
+    badgeTracker.reset();
     familySynced.clear();
     if (subagentDoneTimer) clearTimeout(subagentDoneTimer);
     clearInterval(refreshInterval);

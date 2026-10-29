@@ -64,10 +64,27 @@ async function collectKimi(input: AdapterInput): Promise<UsageReport> {
       const duration = toFiniteNumber(window.duration);
       const unit = String(window.timeUnit ?? "").toUpperCase();
       const name = toNonEmptyString(usage.name);
-      const key = kimiWindowKey(duration, unit, name);
+      const detected = kimiWindowKey(duration, unit, name);
+      const key =
+        detected !== "other"
+          ? detected
+          : /week/i.test(name ?? "")
+            ? "weekly"
+            : /month/i.test(name ?? "")
+              ? "monthly"
+              : /5\s*h/i.test(name ?? "")
+                ? "fiveHour"
+                : "other";
+      const label = key === "fiveHour"
+        ? "5h quota"
+        : key === "weekly"
+          ? "Weekly quota"
+          : key === "monthly"
+            ? "Monthly quota"
+            : (name ?? "Usage");
       report.windows.push(windowFromUsage({
-        key: key === "other" ? "weekly" : key,
-        label: key === "fiveHour" ? "5h quota" : "Weekly quota",
+        key,
+        label,
         used,
         total: limit,
         ...kimiReset(usage)

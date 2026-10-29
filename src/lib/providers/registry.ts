@@ -133,8 +133,10 @@ export function readCachedProviderUsage(
   const cached = cache.get(providerUsageCacheKey(input, adapter));
   if (!cached) return undefined;
   const now = Date.now();
-  if (cached.expiresAt > now || (options.allowStale && cached.staleUntil > now)) {
-    return reportForInput(cached.report, input);
+  const fresh = cached.expiresAt > now;
+  if (fresh || (options.allowStale && cached.staleUntil > now)) {
+    const report = reportForInput(cached.report, input);
+    return fresh ? report : { ...report, stale: true };
   }
   return undefined;
 }

@@ -347,7 +347,7 @@ describe("provider collection", () => {
   it("maps Kimi top-level windows and minute durations", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
-        usage: { limit: 100, used: 20, reset_in: 3_600 },
+        usage: { name: "Weekly limit", limit: 100, used: 20, reset_in: 3_600 },
         limits: [
           {
             name: "5h",
@@ -369,6 +369,26 @@ describe("provider collection", () => {
     expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(30);
     expect(findUsageWindow(report, "weekly")?.usedPercent).toBe(20);
     expect(findUsageWindow(report, "weekly")?.resetAfterMs).toBe(3_600_000);
+  });
+
+  it("does not mislabel an unknown Kimi window as weekly", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ usage: { limit: 100, used: 10 } })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "kimi",
+      credentials: [keyCredential("kimi", "kimi-key")],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.windows).toHaveLength(1);
+    expect(report.windows[0]).toMatchObject({
+      key: "other",
+      label: "Usage",
+      usedPercent: 10
+    });
   });
 
   it("does not emit an empty weekly window for a China 5h-only response", async () => {
@@ -556,6 +576,45 @@ describe("provider collection", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(report.ok).toBe(false);
+  });
+
+  it("selects a coding MiniMax row instead of general/video rows", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        base_resp: { status_code: 0 },
+        model_remains: [
+          {
+            model_name: "general",
+            current_interval_usage_count: 90,
+            current_interval_total_count: 100,
+            remains_time: 18000
+          },
+          {
+            model_name: "video",
+            current_interval_usage_count: 80,
+            current_interval_total_count: 100,
+            remains_time: 18000
+          },
+          {
+            model_name: "MiniMax-M2.5",
+            current_interval_usage_count: 10,
+            current_interval_total_count: 100,
+            remains_time: 18000
+          }
+        ]
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "minimax",
+      modelID: "minimax-m2.5",
+      credentials: [keyCredential("minimax", "minimax-key")],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.items).toContainEqual({ label: "Quota model", value: "MiniMax-M2.5" });
+    expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(90);
   });
 
   it("uses the international endpoint for the generic MiniMax provider", async () => {

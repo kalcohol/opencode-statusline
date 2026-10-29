@@ -106,7 +106,7 @@ V2 データは reactive なので、以下は不要です。
   - `session.execution.interrupted`
   - quota または git diff フィールド有効時の 60 秒 interval
 - 非同期結果は key と version でガードし、provider/location 切替時に前のデータを表示しません。
-- サードパーティ provider collector は 30 秒 fresh cache、10 分 stale fallback を使います。OpenCode Go の組み込み usage は毎回読みます。
+- サードパーティ provider collector は 30 秒 fresh cache、10 分 stale fallback を使い、stale 結果は `Cache: stale` と表示します。OpenCode Go の組み込み usage は 30 秒 fresh cache、5 分 stale fallback を使います。
 
 ## フィールド
 

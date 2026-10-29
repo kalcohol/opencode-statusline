@@ -106,7 +106,7 @@ V2 数据是响应式的，因此不再需要：
   - `session.execution.interrupted`
   - quota 或 git diff 字段启用时，60 秒定时刷新
 - 异步结果带 key 与 version 守卫，切换 provider/location 时不会显示上一个账户的数据。
-- 第三方 provider collector 使用 30 秒 fresh cache 和 10 分钟 stale fallback；失败时优先返回 stale 数据。OpenCode Go 内置 usage 每次读取。
+- 第三方 provider collector 使用 30 秒 fresh cache 和 10 分钟 stale fallback；失败时优先返回 stale 数据并标记 `Cache: stale`。OpenCode Go 内置 usage 使用 30 秒 fresh cache 和 5 分钟 stale fallback。
 
 ## 字段
 

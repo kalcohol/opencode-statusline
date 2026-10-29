@@ -23,16 +23,42 @@ async function collectMiniMax(input: AdapterInput, china: boolean): Promise<Usag
     const status = toFiniteNumber(base.status_code);
     if (status !== undefined && status !== 0) throw new Error(toNonEmptyString(base.status_msg) ?? `status_code ${status}`);
     const remains = Array.isArray(payload.model_remains) ? payload.model_remains.filter(isRecord) : [];
-    const wanted = input.modelID?.trim().toLowerCase();
+    const wanted = input.modelID?.trim().toLowerCase().split("/").pop();
     const name = (item: Record<string, unknown>) =>
       (toNonEmptyString(item.model_name) ?? "").toLowerCase();
+    const rows = remains.map((item) => ({ item, name: name(item) }));
+    const coding = rows.filter((row) => row.name.startsWith("minimax-m"));
+    const signature = (item: Record<string, unknown>) =>
+      JSON.stringify([
+        item.current_interval_total_count,
+        item.current_interval_usage_count,
+        item.remains_time,
+        item.current_weekly_total_count,
+        item.current_weekly_usage_count,
+        item.weekly_remains_time
+      ]);
+    const wildcard = rows.find((row) => row.name === "minimax-m*")?.item;
+    const exact = wanted ? rows.find((row) => row.name === wanted)?.item : undefined;
+    const prefixed =
+      wanted && coding.length > 1
+        ? coding.filter((row) => row.name.startsWith(`${wanted}-`))
+        : [];
+    const codingSelected =
+      coding.length === 1
+        ? coding[0].item
+        : prefixed.length === 1
+          ? prefixed[0].item
+          : coding.length > 1 &&
+              coding.every((row) => signature(row.item) === signature(coding[0].item))
+            ? coding[0].item
+            : undefined;
+    const fallback = rows.find((row) => row.name === "general" || row.name === "video")?.item;
     const selected =
-      remains.find((item) => name(item) === "minimax-m*")
-      ?? (wanted ? remains.find((item) => name(item) === wanted) : undefined)
-      ?? remains.find((item) => name(item).startsWith("minimax-m"))
-      ?? remains.find((item) => name(item) === "general" || name(item) === "video")
-      ?? remains[0];
-    if (!selected) throw new Error("No model quota rows found");
+      wildcard ??
+      exact ??
+      codingSelected ??
+      (coding.length === 0 ? (fallback ?? (rows.length === 1 ? rows[0].item : undefined)) : undefined);
+    if (!selected) throw new Error("No matching model quota row found");
 
     const report = baseReport({ ...input, auth: credential.source });
     report.plan = china ? "MiniMax coding plan (China)" : "MiniMax coding plan";

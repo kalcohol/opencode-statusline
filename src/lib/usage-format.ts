@@ -1,4 +1,5 @@
 import {
+  formatLocalDateTime,
   formatPercent,
   formatReset,
   sanitizeDisplayText
@@ -34,6 +35,9 @@ export function formatUsageReport(report: UsageReport | undefined): string {
   if (report.modelID) lines.push(`Model: ${report.modelID}`);
   if (report.auth) lines.push(`Auth: ${report.auth}`);
   if (report.plan) lines.push(`Plan: ${report.plan}`);
+  const updated = formatLocalDateTime(report.generatedAtMs);
+  if (updated) lines.push(`Updated: ${updated}`);
+  if (report.stale) lines.push("Cache: stale (last successful read)");
   if (!report.ok && report.error) lines.push(`Status: ${report.error}`);
 
   if (report.balances.length) {
