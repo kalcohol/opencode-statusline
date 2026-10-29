@@ -181,7 +181,10 @@ export function Statusline(props: {
   });
 
   const onExecution = (event: { data: { sessionID: string } }) => {
-    if (event.data.sessionID === props.sessionID) setRefreshTick((value) => value + 1);
+    const sessionID = event.data.sessionID;
+    if (sessionID === props.sessionID || sessions().some((item) => item.id === sessionID)) {
+      setRefreshTick((value) => value + 1);
+    }
   };
   const onCredential = () => {
     quotaVersion += 1;

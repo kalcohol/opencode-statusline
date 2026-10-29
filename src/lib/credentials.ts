@@ -44,6 +44,12 @@ function fingerprintValue(entry: CredentialEntry): string {
   return entry.value.type;
 }
 
+function fingerprintMetadata(entry: CredentialEntry): string {
+  if (entry.value.type === "external") return "";
+  const metadata = entry.value.metadata;
+  return metadata ? JSON.stringify(metadata) : "";
+}
+
 function findEntry(
   credentials: CredentialSet | undefined,
   integrationIDs: readonly string[],
@@ -116,7 +122,7 @@ export function credentialFingerprint(credentials: CredentialSet | undefined): s
   return credentials
     .map((entry) => {
       const value = fingerprintValue(entry);
-      return `${entry.integrationID}:${entry.label}:${entry.active ? "1" : "0"}:${value}`;
+      return `${entry.id}:${entry.integrationID}:${entry.label}:${entry.active ? "1" : "0"}:${value}:${fingerprintMetadata(entry)}`;
     })
     .join("\n");
 }

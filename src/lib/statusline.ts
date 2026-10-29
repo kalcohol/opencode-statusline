@@ -148,7 +148,7 @@ export function contextUsage(
 }
 
 function turnStartIndex(messages: readonly SessionMessageInfo[], end: number): number {
-  const legacy = !messages.some((message) => message.type === "idle");
+  const legacy = !messages.slice(0, end).some((message) => message.type === "idle");
   let input = -1;
   for (let index = end - 1; index >= 0; index -= 1) {
     const message = messages[index];

@@ -418,7 +418,7 @@ Mapping：
 | `code_review_rate_limit.primary_window` | code review quota |
 | `credits` | credits balance / unlimited state |
 
-expired OAuth access tokens は unavailable として報告されます。この plugin は OAuth token を refresh しません。
+この plugin は OAuth token を refresh しません。credential store の access token が期限切れの場合、ChatGPT endpoint は 401 を返します。OpenCode で OpenAI の request を 1 回送信して host に credential を refresh させてください。
 
 ## OpenCode Zen
 

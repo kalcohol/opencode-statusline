@@ -75,7 +75,7 @@ type ProviderKind =
   | "openai-oauth"
   | "unknown";
 
-const USER_AGENT = "OpenCode-Statusline/0.1";
+const USER_AGENT = "OpenCode-Statusline/0.2";
 const DEFAULT_TIMEOUT_MS = 12_000;
 const CACHE_TTL_MS = 30_000;
 const CACHE_STALE_TTL_MS = 10 * 60_000;
@@ -382,8 +382,7 @@ function openAIEmail(access: string): string | undefined {
   const payload = parseJwtPayload(access);
   const profile = payload?.["https://api.openai.com/profile"];
   if (isRecord(profile)) return toNonEmptyString(profile.email);
-  return toNonEmptyString(payload?.["https://api.openpi.com/profile.email"])
-    ?? toNonEmptyString(payload?.["https://api.openai.com/profile.email"]);
+  return toNonEmptyString(payload?.["https://api.openai.com/profile.email"]);
 }
 
 async function queryZaiLike(input: {
@@ -422,6 +421,13 @@ async function queryZaiLike(input: {
     });
     const report = baseReport({ ...input, auth: credential.source });
     report.plan = input.zhipu ? "Zhipu coding plan" : "Z.ai coding plan";
+    if (isRecord(payload)) {
+      const code = toFiniteNumber(payload.code);
+      if (payload.success === false || (code !== undefined && code >= 400)) {
+        const message = toNonEmptyString(payload.msg) ?? toNonEmptyString(payload.message);
+        throw new Error(message ?? (code !== undefined ? `API error ${code}` : "API error"));
+      }
+    }
     const data = isRecord(payload) && isRecord(payload.data) ? payload.data : {};
     const limits = Array.isArray(data.limits)
       ? data.limits
@@ -645,20 +651,33 @@ async function queryMiniMax(input: {
           : input.china
             ? weeklyRaw
             : undefined;
-    report.windows.push(windowFromUsage({
-      key: "fiveHour",
-      label: "5h quota",
-      used: intervalUsed,
-      total: intervalTotal,
-      resetAfterMs: selected.remains_time
-    }));
-    report.windows.push(windowFromUsage({
-      key: "weekly",
-      label: "Weekly quota",
-      used: weeklyUsed,
-      total: weeklyTotal,
-      resetAfterMs: selected.weekly_remains_time
-    }));
+    if (
+      intervalTotal !== undefined ||
+      intervalRaw !== undefined ||
+      toFiniteNumber(selected.remains_time) !== undefined
+    ) {
+      report.windows.push(windowFromUsage({
+        key: "fiveHour",
+        label: "5h quota",
+        used: intervalUsed,
+        total: intervalTotal,
+        resetAfterMs: selected.remains_time
+      }));
+    }
+    if (
+      weeklyTotal !== undefined ||
+      weeklyRaw !== undefined ||
+      toFiniteNumber(selected.weekly_remains_time) !== undefined
+    ) {
+      report.windows.push(windowFromUsage({
+        key: "weekly",
+        label: "Weekly quota",
+        used: weeklyUsed,
+        total: weeklyTotal,
+        resetAfterMs: selected.weekly_remains_time
+      }));
+    }
+    if (report.windows.length === 0) throw new Error("No quota windows found in response");
     return report;
   } catch (err) {
     return errorReport({ ...input, auth: credential.source, error: err instanceof Error ? err.message : String(err) });
@@ -931,8 +950,11 @@ async function queryOpenAI(input: {
     const primary = isRecord(rateLimit.primary_window) ? rateLimit.primary_window : undefined;
     const secondary = isRecord(rateLimit.secondary_window) ? rateLimit.secondary_window : undefined;
     if (typeof rateLimit.limit_reached === "boolean") report.items.push({ label: "Limit reached", value: String(rateLimit.limit_reached) });
+    const windows = new Map<UsageWindowKey, { window: UsageWindow; conflict: boolean; resetKey: string }>();
     for (const [window, fallbackKey] of [[primary, "fiveHour"], [secondary, "weekly"]] as const) {
       if (!window) continue;
+      const usedPercent = toFiniteNumber(window.used_percent);
+      if (usedPercent === undefined) continue;
       const duration = toFiniteNumber(window.limit_window_seconds);
       const key: UsageWindowKey | undefined = duration === undefined
         ? fallbackKey
@@ -945,20 +967,32 @@ async function queryOpenAI(input: {
               : undefined;
       if (!key) continue;
       const label = key === "fiveHour" ? "5h quota" : key === "weekly" ? "Weekly quota" : "Monthly quota";
-      report.windows.push(windowFromUsage({
+      const resetAt = toFiniteNumber(window.reset_at);
+      const resetAfter = toFiniteNumber(window.reset_after_seconds);
+      const resetKey = `${resetAt ?? ""}:${resetAfter ?? ""}`;
+      const next = windowFromUsage({
         key,
         label,
-        usedPercent: window.used_percent,
-        resetAtMs: resetAtFromUnixSeconds(window.reset_at) ?? resetAtFromSeconds(window.reset_after_seconds)
-      }));
+        usedPercent,
+        resetAtMs: resetAtFromUnixSeconds(resetAt) ?? resetAtFromSeconds(resetAfter)
+      });
+      const prior = windows.get(key);
+      if (!prior) windows.set(key, { window: next, conflict: false, resetKey });
+      else if (prior.window.usedPercent !== usedPercent || prior.resetKey !== resetKey) {
+        windows.set(key, { ...prior, conflict: true });
+      }
+    }
+    for (const entry of windows.values()) {
+      if (!entry.conflict) report.windows.push(entry.window);
     }
     const codeReviewRoot = isRecord(payload.code_review_rate_limit) ? payload.code_review_rate_limit : {};
     const codeReview = isRecord(codeReviewRoot.primary_window) ? codeReviewRoot.primary_window : undefined;
-    if (codeReview) {
+    const codeReviewPercent = codeReview ? toFiniteNumber(codeReview.used_percent) : undefined;
+    if (codeReview && codeReviewPercent !== undefined) {
       report.windows.push(windowFromUsage({
         key: "codeReview",
         label: "Code review quota",
-        usedPercent: codeReview.used_percent,
+        usedPercent: codeReviewPercent,
         resetAtMs: resetAtFromUnixSeconds(codeReview.reset_at) ?? resetAtFromSeconds(codeReview.reset_after_seconds)
       }));
     }

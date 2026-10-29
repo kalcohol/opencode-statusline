@@ -172,7 +172,7 @@ describe("provider collection", () => {
 
   it("does not fall back to another integration's credential when the provider is explicitly bound elsewhere", async () => {
     process.env.DEEPSEEK_API_KEY = "deepseek-env";
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
     const report = await collectProviderUsage({
       providerID: "deepseek",
       providerInfo: { id: "deepseek", integrationID: "opencode" },
@@ -201,8 +201,40 @@ describe("provider collection", () => {
     expect(report.ok).toBe(false);
   });
 
+  it("isolates the cache when the same token targets a different organization", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const org = new Headers(init?.headers).get("x-opencode-org-id");
+      return jsonResponse({
+        usage: {
+          rolling: { status: "ok", percent: org === "org-a" ? 10 : 80, resetsAt: "2026-08-19T01:00:00.000Z" }
+        }
+      });
+    });
+    const credential = (orgID: string): CredentialEntry => ({
+      id: "go-credential",
+      integrationID: "opencode-go",
+      label: "go",
+      active: true,
+      value: { type: "key", key: "same-token", metadata: { orgID } }
+    });
+
+    const first = await collectProviderUsage({
+      providerID: "opencode-go",
+      credentials: [credential("org-a")],
+      force: true
+    });
+    const second = await collectProviderUsage({
+      providerID: "opencode-go",
+      credentials: [credential("org-b")]
+    });
+
+    expect(findUsageWindow(first, "fiveHour")?.usedPercent).toBe(10);
+    expect(findUsageWindow(second, "fiveHour")?.usedPercent).toBe(80);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("does not send an OpenCode Console OAuth token to the ChatGPT endpoint", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
     const report = await collectProviderUsage({
       providerID: "openai",
       credentials: [oauthCredential("opencode", "console-access")],
@@ -215,7 +247,7 @@ describe("provider collection", () => {
   });
 
   it("does not fall back to OpenAI OAuth when the provider is bound to another integration", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
     const report = await collectProviderUsage({
       providerID: "openai",
       providerInfo: { id: "openai", integrationID: "opencode" },
@@ -257,6 +289,28 @@ describe("provider collection", () => {
     expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(70);
     expect(findUsageWindow(report, "weekly")).toBeUndefined();
     expect(report.plan).toBe("ChatGPT Business");
+  });
+
+  it("reports Z.ai business errors returned with HTTP 200", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        success: false,
+        code: 401,
+        msg: "invalid api key",
+        data: {
+          limits: [{ type: "TOKENS_LIMIT", unit: 3, percentage: 10 }]
+        }
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "zai",
+      credentials: [keyCredential("zai", "zai-key")],
+      force: true
+    });
+
+    expect(report.ok).toBe(false);
+    expect(report.error).toContain("invalid api key");
   });
 
   it("reads Z.ai limits from the top-level response shape", async () => {
@@ -301,6 +355,98 @@ describe("provider collection", () => {
     expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(30);
     expect(findUsageWindow(report, "weekly")?.usedPercent).toBe(20);
     expect(findUsageWindow(report, "weekly")?.resetAfterMs).toBe(3_600_000);
+  });
+
+  it("does not emit an empty weekly window for a China 5h-only response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        base_resp: { status_code: 0 },
+        model_remains: [
+          {
+            model_name: "MiniMax-M*",
+            current_interval_usage_count: 10,
+            current_interval_total_count: 100,
+            remains_time: 18000
+          }
+        ]
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "minimax-cn",
+      credentials: [keyCredential("minimax-cn", "minimax-cn-key")],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.windows).toHaveLength(1);
+    expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(10);
+    expect(findUsageWindow(report, "weekly")).toBeUndefined();
+  });
+
+  it("drops ambiguous OpenAI windows with the same duration but conflicting percentages", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        plan_type: "plus",
+        rate_limit: {
+          primary_window: { used_percent: 20, limit_window_seconds: 18_000 },
+          secondary_window: { used_percent: 30, limit_window_seconds: 18_000 }
+        },
+        credits: { balance: "1.00" }
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "openai",
+      credentials: [oauthCredential("openai", "a.b.c")],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(findUsageWindow(report, "fiveHour")).toBeUndefined();
+  });
+
+  it("drops OpenAI windows with the same percentage but different reset times", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        plan_type: "plus",
+        rate_limit: {
+          primary_window: { used_percent: 20, limit_window_seconds: 18_000, reset_after_seconds: 60 },
+          secondary_window: { used_percent: 20, limit_window_seconds: 18_000, reset_after_seconds: 120 }
+        },
+        credits: { balance: "1.00" }
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "openai",
+      credentials: [oauthCredential("openai", "a.b.c")],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(findUsageWindow(report, "fiveHour")).toBeUndefined();
+  });
+
+  it("ignores OpenAI windows without a usable percentage", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        plan_type: "plus",
+        rate_limit: {
+          primary_window: { limit_window_seconds: 18_000 },
+          secondary_window: { used_percent: 70, limit_window_seconds: 18_000 }
+        }
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "openai",
+      credentials: [oauthCredential("openai", "a.b.c")],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(70);
   });
 
   it("uses the international endpoint for the generic MiniMax provider", async () => {

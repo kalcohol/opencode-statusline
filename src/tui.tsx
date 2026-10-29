@@ -148,7 +148,7 @@ export default Plugin.define({
       append: "prompt.footer.status",
       render: (input) => (
         <Show
-          when={input.mode === "normal" && Boolean(input.sessionID)}
+          when={input.mode === "normal" && input.showDetails && Boolean(input.sessionID)}
           fallback={null}
         >
           <Statusline

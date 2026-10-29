@@ -57,7 +57,7 @@ describe("quota loading", () => {
         }
       }
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
 
     const report = await loadQuotaReport(
       context,
@@ -171,7 +171,7 @@ describe("quota loading", () => {
         }
       ]
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
 
     const report = await loadQuotaReport(
       context,

@@ -216,6 +216,34 @@ describe("statusline snapshot rendering", () => {
     expect(generationMetrics([user, withoutTokens, idle])).toBeUndefined();
   });
 
+  it("ignores idle markers after a revert boundary when choosing the turn start", () => {
+    const user = (id: string, created: number) =>
+      ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
+    const idle = (id: string, created: number) =>
+      ({ id, type: "idle", time: { created } }) as unknown as SessionMessageInfo;
+    const boundary = { id: "boundary", type: "user", time: { created: 5000 } } as unknown as SessionMessageInfo;
+    const first = assistant({
+      id: "msg-1",
+      created: 200,
+      streamed: 1200,
+      completed: 1300,
+      tokens: tokens(100, 100, 0)
+    });
+    const second = assistant({
+      id: "msg-2",
+      created: 2100,
+      streamed: 4100,
+      completed: 4200,
+      tokens: tokens(100, 800, 0)
+    });
+
+    expect(generationMetrics([user("user-1", 100), first, user("user-2", 2000), second, boundary])?.tokensPerSecond).toBe(400);
+    expect(
+      generationMetrics([user("user-1", 100), first, user("user-2", 2000), second, boundary, idle("idle-future", 6000)])
+        ?.tokensPerSecond
+    ).toBe(400);
+  });
+
   it("uses the last assistant model for the context limit", () => {
     const snapshot = buildStatuslineSnapshot({
       messages: [assistant({ tokens: tokens(1000, 100, 0) })],

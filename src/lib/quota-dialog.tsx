@@ -58,7 +58,8 @@ export function resolveQuotaTarget(context: Context): QuotaTarget | undefined {
 function QuotaDialog(props: { context: Context; target: QuotaTarget }) {
   const theme = () => props.context.theme.surface("dialog");
   const dimensions = useTerminalDimensions();
-  const maxHeight = () => Math.max(5, dimensions().height - 10);
+  const maxHeight = () =>
+    Math.max(3, dimensions().height - Math.floor(dimensions().height / 4) - 8);
   const [report] = createResource(() =>
     loadQuotaReport(props.context, props.target, { force: true })
   );
