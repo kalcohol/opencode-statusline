@@ -66,6 +66,16 @@ describe("statusline event wiring", () => {
     expect(badge.at(-1)).toEqual({ count: 1, speed: 100 });
   });
 
+  it("refreshes on main-session completion without creating a badge", () => {
+    const { events, badge, refresh } = setup(new Map());
+
+    events.success("root");
+    events.fail("root");
+
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(badge).toEqual([]);
+  });
+
   it("clears the badge after the completion window", () => {
     vi.useFakeTimers();
     const messages = new Map<string, SessionMessageInfo[]>();

@@ -35,8 +35,10 @@ export class StatuslineEvents {
   }
 
   success(sessionID: string): void {
-    if (!this.inSubtree(sessionID)) return;
+    const current = sessionID === this.dependencies.currentSessionID();
+    if (!current && !this.inSubtree(sessionID)) return;
     this.dependencies.refresh();
+    if (current) return;
     const finished = this.tracker.finish(sessionID);
     if (!finished.counted) return;
 
@@ -70,8 +72,9 @@ export class StatuslineEvents {
   }
 
   fail(sessionID: string): void {
-    if (!this.inSubtree(sessionID)) return;
-    this.tracker.fail(sessionID);
+    const current = sessionID === this.dependencies.currentSessionID();
+    if (!current && !this.inSubtree(sessionID)) return;
+    if (!current) this.tracker.fail(sessionID);
     this.dependencies.refresh();
   }
 
