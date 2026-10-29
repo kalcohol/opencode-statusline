@@ -1,4 +1,4 @@
-import { formatMoney, isRecord, toFiniteNumber, toNonEmptyString } from "../format.js";
+import { formatMoney, formatQuantity, isRecord, toFiniteNumber, toNonEmptyString } from "../format.js";
 import {
   baseReport,
   errorReport,
@@ -9,6 +9,10 @@ import {
   windowFromUsage
 } from "./shared.js";
 import type { AdapterInput, ProviderAdapter, UsageReport, UsageWindow, UsageWindowKey } from "./types.js";
+
+// Codex credits are sold in packs (1000 credits / $40 in the observed pricing).
+// This is an estimate for display only; OpenAI does not document an API credit rate.
+const CODEX_CREDIT_USD = 0.04;
 
 function parseJwtPayload(token: string): Record<string, unknown> | undefined {
   try {
@@ -122,10 +126,24 @@ async function collectOpenAI(input: AdapterInput): Promise<UsageReport> {
     }
     const credits = isRecord(payload.credits) ? payload.credits : undefined;
     if (credits) {
-      if (credits.unlimited === true) report.balances.push({ label: "Credits", value: "unlimited" });
-      else {
-        const balance = formatMoney(credits.balance);
-        if (balance) report.balances.push({ label: "Credits", value: balance });
+      if (credits.unlimited === true) {
+        report.balances.push({ label: "Credits", value: "unlimited" });
+      } else {
+        const amount = toFiniteNumber(credits.balance);
+        if (amount !== undefined) {
+          const points = formatQuantity(amount);
+          report.balances.push({ label: "Credits", value: `${points} credits` });
+          const dollars = formatMoney(amount * CODEX_CREDIT_USD);
+          if (dollars) {
+            report.items.push({
+              label: "Credit value",
+              value: `≈ ${dollars} at $0.04/credit (estimated)`
+            });
+          }
+        } else {
+          const raw = toNonEmptyString(credits.balance);
+          if (raw) report.balances.push({ label: "Credits", value: raw });
+        }
       }
       if (typeof credits.has_credits === "boolean") report.items.push({ label: "Has credits", value: String(credits.has_credits) });
     }

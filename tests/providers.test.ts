@@ -247,7 +247,7 @@ describe("provider collection", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("rounds OpenAI credit balances", async () => {
+  it("shows OpenAI Codex credits as points with an estimated dollar value", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
         plan_type: "plus",
@@ -262,7 +262,11 @@ describe("provider collection", () => {
     });
 
     expect(report.ok).toBe(true);
-    expect(report.balances[0]).toEqual({ label: "Credits", value: "$12.35" });
+    expect(report.balances[0]).toEqual({ label: "Credits", value: "12.35 credits" });
+    expect(report.items).toContainEqual({
+      label: "Credit value",
+      value: "≈ $0.49 at $0.04/credit (estimated)"
+    });
   });
 
   it("does not send an OpenCode Console OAuth token to the ChatGPT endpoint", async () => {

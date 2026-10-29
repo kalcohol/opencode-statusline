@@ -416,7 +416,9 @@ Mapping:
 | --- | --- |
 | `rate_limit.primary_window` / `secondary_window` | classified by `limit_window_seconds`: 18000 = 5h, 604800 = weekly, 2628000 = monthly |
 | `code_review_rate_limit.primary_window` | code review quota |
-| `credits` | credits balance / unlimited state |
+| `credits` | Codex credits/points balance / unlimited state |
+
+`credits.balance` is the Codex credit/point balance, not a USD amount. The plugin shows it as `12.35 credits` and adds an estimated dollar value using the observed `1000 credits = $40` purchase rate (`$0.04/credit`). That rate is for display only and is not an OpenAI-published API guarantee.
 
 The plugin does not refresh OAuth tokens. If the access token in the credential store is already expired, the ChatGPT endpoint returns 401; send one OpenAI request in OpenCode so the host can refresh the credential.
 

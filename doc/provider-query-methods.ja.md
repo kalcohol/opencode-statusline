@@ -416,7 +416,9 @@ Mapping：
 | --- | --- |
 | `rate_limit.primary_window` / `secondary_window` | `limit_window_seconds` で分類：18000 = 5h、604800 = weekly、2628000 = monthly |
 | `code_review_rate_limit.primary_window` | code review quota |
-| `credits` | credits balance / unlimited state |
+| `credits` | Codex credits/points balance / unlimited state |
+
+`credits.balance` は USD 金額ではなく Codex credit/point 残高です。plugin は `12.35 credits` として表示し、観測された `1000 credits = $40` の購入レート（`$0.04/credit`）で推定 USD を併記します。このレートは表示用の推定であり、OpenAI が API として保証するものではありません。
 
 この plugin は OAuth token を refresh しません。credential store の access token が期限切れの場合、ChatGPT endpoint は 401 を返します。OpenCode で OpenAI の request を 1 回送信して host に credential を refresh させてください。
 
