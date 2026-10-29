@@ -6,25 +6,39 @@ import typescriptPreset from "@babel/preset-typescript";
 import solidPreset from "babel-preset-solid";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const sourcePath = path.join(root, "src", "tui.tsx");
-const distJsPath = path.join(root, "dist", "tui.js");
+const dist = path.join(root, "dist");
 
-const source = await fs.readFile(sourcePath, "utf8");
-const transformed = await babel.transformAsync(source, {
-  filename: sourcePath,
-  configFile: false,
-  babelrc: false,
-  presets: [
-    [solidPreset, { moduleName: "@opentui/solid", generate: "universal" }],
-    [typescriptPreset]
-  ]
-});
-
-if (!transformed?.code) {
-  throw new Error("Babel transform returned empty output");
+async function walk(directory) {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const file = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...(await walk(file)));
+    else files.push(file);
+  }
+  return files;
 }
 
-await fs.writeFile(distJsPath, `${transformed.code}\n`);
-await fs.rm(path.join(root, "dist", "tui.tsx"), { force: true });
-await fs.rm(path.join(root, "dist", "tui.jsx"), { force: true });
-await fs.rm(path.join(root, "dist", "tui.jsx.map"), { force: true });
+const files = (await walk(dist)).filter((file) => file.endsWith(".jsx"));
+for (const sourcePath of files) {
+  const source = await fs.readFile(sourcePath, "utf8");
+  const transformed = await babel.transformAsync(source, {
+    filename: sourcePath,
+    configFile: false,
+    babelrc: false,
+    presets: [
+      [solidPreset, { moduleName: "@opentui/solid", generate: "universal" }],
+      [typescriptPreset]
+    ]
+  });
+
+  if (!transformed?.code) {
+    throw new Error(`Babel transform returned empty output for ${sourcePath}`);
+  }
+
+  const outputPath = sourcePath.slice(0, -".jsx".length) + ".js";
+  await fs.writeFile(outputPath, `${transformed.code}\n`);
+  await fs.rm(sourcePath, { force: true });
+  await fs.rm(`${sourcePath}.map`, { force: true });
+  await fs.rm(`${outputPath}.map`, { force: true });
+}

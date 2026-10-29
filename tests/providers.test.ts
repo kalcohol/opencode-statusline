@@ -1,6 +1,4 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import type { CredentialEntry } from "@opencode/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearProviderUsageCache,
@@ -10,7 +8,6 @@ import {
 } from "../src/lib/providers.js";
 
 const savedEnv = { ...process.env };
-let tempDir = "";
 
 function jsonResponse(value: unknown): Response {
   return new Response(JSON.stringify(value), {
@@ -19,10 +16,34 @@ function jsonResponse(value: unknown): Response {
   });
 }
 
+function keyCredential(integrationID: string, key: string, active = true): CredentialEntry {
+  return {
+    id: `${integrationID}-${key}`,
+    integrationID,
+    label: key,
+    active,
+    value: { type: "key", key }
+  };
+}
+
+function oauthCredential(integrationID: string, access: string): CredentialEntry {
+  return {
+    id: `${integrationID}-oauth`,
+    integrationID,
+    label: "oauth",
+    active: true,
+    value: {
+      type: "oauth",
+      methodID: "test",
+      refresh: "refresh",
+      access,
+      expires: Date.now() + 60_000
+    }
+  };
+}
+
 describe("provider collection", () => {
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-statusline-provider-"));
-    process.env.OPENCODE_AUTH_JSON = path.join(tempDir, "auth.json");
     clearProviderUsageCache();
   });
 
@@ -33,7 +54,6 @@ describe("provider collection", () => {
       if (!(key in savedEnv)) delete process.env[key];
     }
     Object.assign(process.env, savedEnv);
-    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   it("bounds response-body parsing with the request timeout", async () => {
@@ -42,21 +62,32 @@ describe("provider collection", () => {
       json: () => new Promise<never>(() => undefined)
     } as unknown as Response);
 
-    await expect(fetchJsonWithTimeout("https://example.test/stalled", {}, 20))
-      .rejects.toThrow("Request timed out after 20ms");
+    await expect(fetchJsonWithTimeout("https://example.test/stalled", {}, 20)).rejects.toThrow(
+      "Request timed out after 20ms"
+    );
   });
 
   it("shares account-level cache across models and isolates changed credentials", async () => {
-    process.env.OPENROUTER_API_KEY = "key-a";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
       const token = new Headers(init?.headers).get("Authorization");
       return jsonResponse({ data: { limit_remaining: token === "Bearer key-a" ? 10 : 20 } });
     });
 
-    const first = await collectProviderUsage({ providerID: "openrouter", modelID: "model-a" });
-    const sameAccount = await collectProviderUsage({ providerID: "openrouter", modelID: "model-b" });
-    process.env.OPENROUTER_API_KEY = "key-b";
-    const nextAccount = await collectProviderUsage({ providerID: "openrouter", modelID: "model-c" });
+    const first = await collectProviderUsage({
+      providerID: "openrouter",
+      modelID: "model-a",
+      credentials: [keyCredential("openrouter", "key-a")]
+    });
+    const sameAccount = await collectProviderUsage({
+      providerID: "openrouter",
+      modelID: "model-b",
+      credentials: [keyCredential("openrouter", "key-a")]
+    });
+    const nextAccount = await collectProviderUsage({
+      providerID: "openrouter",
+      modelID: "model-c",
+      credentials: [keyCredential("openrouter", "key-b")]
+    });
 
     expect(first.balances[0]?.value).toBe("$10.00");
     expect(sameAccount.modelID).toBe("model-b");
@@ -65,15 +96,15 @@ describe("provider collection", () => {
   });
 
   it("coalesces concurrent forced refreshes for the same account", async () => {
-    process.env.OPENROUTER_API_KEY = "key-a";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       return jsonResponse({ data: { limit_remaining: 10 } });
     });
 
+    const credentials = [keyCredential("openrouter", "key-a")];
     const [first, second] = await Promise.all([
-      collectProviderUsage({ providerID: "openrouter", modelID: "model-a", force: true }),
-      collectProviderUsage({ providerID: "openrouter", modelID: "model-b", force: true })
+      collectProviderUsage({ providerID: "openrouter", modelID: "model-a", credentials, force: true }),
+      collectProviderUsage({ providerID: "openrouter", modelID: "model-b", credentials, force: true })
     ]);
 
     expect(first.modelID).toBe("model-a");
@@ -89,30 +120,17 @@ describe("provider collection", () => {
     expect(second.error).toContain("custom-beta");
   });
 
-  it("builds credential cache keys from cyclic provider options", async () => {
-    process.env.OPENROUTER_API_KEY = "key-a";
-    const options: Record<string, unknown> = {};
-    options.self = options;
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ data: { limit_remaining: 10 } }));
-
-    const report = await collectProviderUsage({
-      providerID: "openrouter",
-      providerInfo: { options }
-    });
-
-    expect(report.ok).toBe(true);
-    expect(report.balances[0]?.value).toBe("$10.00");
-  });
-
-  it("queries OpenCode Go usage with the regular API key", async () => {
+  it("queries OpenCode Go usage with an API key", async () => {
     process.env.OPENCODE_API_KEY = "go-key";
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
-      usage: {
-        rolling: { status: "ok", percent: 12.5, resetsAt: "2026-08-19T01:00:00.000Z" },
-        weekly: { status: "rate-limited", percent: 100, resetsAt: "2026-08-24T00:00:00.000Z" },
-        monthly: { status: "ok", percent: 40, resetsAt: "2026-09-18T00:00:00.000Z" }
-      }
-    }));
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        usage: {
+          rolling: { status: "ok", percent: 12.5, resetsAt: "2026-08-19T01:00:00.000Z" },
+          weekly: { status: "rate-limited", percent: 100, resetsAt: "2026-08-24T00:00:00.000Z" },
+          monthly: { status: "ok", percent: 40, resetsAt: "2026-09-18T00:00:00.000Z" }
+        }
+      })
+    );
 
     const report = await collectProviderUsage({ providerID: "opencode-go", force: true });
 
@@ -130,47 +148,65 @@ describe("provider collection", () => {
     expect(findUsageWindow(report, "monthly")?.usedPercent).toBe(40);
   });
 
-  it("reads the OpenCode Go API key from auth.json", async () => {
+  it("reads the OpenCode Go credential from the V2 credential store", async () => {
     delete process.env.OPENCODE_API_KEY;
-    fs.writeFileSync(process.env.OPENCODE_AUTH_JSON!, JSON.stringify({
-      "opencode-go": { type: "api", key: "saved-go-key" }
-    }));
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
-      usage: {
-        rolling: { status: "ok", percent: 5, resetsAt: "2026-08-19T01:00:00.000Z" }
-      }
-    }));
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        usage: {
+          rolling: { status: "ok", percent: 5, resetsAt: "2026-08-19T01:00:00.000Z" }
+        }
+      })
+    );
 
-    const report = await collectProviderUsage({ providerID: "opencodego", force: true });
+    const report = await collectProviderUsage({
+      providerID: "opencodego",
+      credentials: [keyCredential("opencode", "saved-go-key")],
+      force: true
+    });
 
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe("Bearer saved-go-key");
     expect(report.ok).toBe(true);
-    expect(report.auth).toBe("auth.json:opencode-go");
+    expect(report.auth).toBe("credential:saved-go-key");
     expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(5);
   });
 
-  it("classifies OpenAI windows by duration rather than response position", async () => {
-    fs.writeFileSync(process.env.OPENCODE_AUTH_JSON!, JSON.stringify({
-      openai: { type: "oauth", access: "a.b.c", expires: Date.now() + 60_000 }
-    }));
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
-      plan_type: "business",
-      rate_limit: {
-        limit_reached: false,
-        primary_window: {
-          used_percent: 20,
-          limit_window_seconds: 2_628_000,
-          reset_after_seconds: 60
-        },
-        secondary_window: {
-          used_percent: 70,
-          limit_window_seconds: 18_000,
-          reset_after_seconds: 30
-        }
-      }
-    }));
+  it("does not send an OpenCode Console OAuth token to the ChatGPT endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const report = await collectProviderUsage({
+      providerID: "openai",
+      credentials: [oauthCredential("opencode", "console-access")],
+      force: true
+    });
 
-    const report = await collectProviderUsage({ providerID: "openai", force: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(report.ok).toBe(false);
+    expect(report.error).toContain("No OpenAI OAuth credential");
+  });
+
+  it("classifies OpenAI windows by duration rather than response position", async () => {    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        plan_type: "business",
+        rate_limit: {
+          limit_reached: false,
+          primary_window: {
+            used_percent: 20,
+            limit_window_seconds: 2_628_000,
+            reset_after_seconds: 60
+          },
+          secondary_window: {
+            used_percent: 70,
+            limit_window_seconds: 18_000,
+            reset_after_seconds: 30
+          }
+        }
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "openai",
+      credentials: [oauthCredential("openai", "a.b.c")],
+      force: true
+    });
 
     expect(findUsageWindow(report, "monthly")?.usedPercent).toBe(20);
     expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(70);
@@ -178,22 +214,77 @@ describe("provider collection", () => {
     expect(report.plan).toBe("ChatGPT Business");
   });
 
-  it("uses the international endpoint for the generic MiniMax provider", async () => {
-    process.env.MINIMAX_API_KEY = "minimax-key";
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
-      base_resp: { status_code: 0 },
-      model_remains: [{
-        model_name: "MiniMax-M*",
-        current_interval_usage_count: 10,
-        current_interval_total_count: 100,
-        current_weekly_usage_count: 20,
-        current_weekly_total_count: 200
-      }]
-    }));
+  it("reads Z.ai limits from the top-level response shape", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        limits: [{ type: "TOKENS_LIMIT", unit: 3, percentage: 25, nextResetTime: 1_000 }]
+      })
+    );
 
-    const report = await collectProviderUsage({ providerID: "minimax", force: true });
+    const report = await collectProviderUsage({
+      providerID: "zai",
+      credentials: [keyCredential("zai", "zai-key")],
+      force: true
+    });
 
     expect(report.ok).toBe(true);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.minimax.io/v1/api/openplatform/coding_plan/remains");
+    expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(25);
+  });
+
+  it("maps Kimi top-level windows and minute durations", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        usage: { limit: 100, used: 20, reset_in: 3_600 },
+        limits: [
+          {
+            name: "5h",
+            detail: { limit: 100, used: 30 },
+            window: { duration: 300, timeUnit: "MINUTE" },
+            reset_at: "2026-08-19T01:00:00.000Z"
+          }
+        ]
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "kimi",
+      credentials: [keyCredential("kimi", "kimi-key")],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(30);
+    expect(findUsageWindow(report, "weekly")?.usedPercent).toBe(20);
+    expect(findUsageWindow(report, "weekly")?.resetAfterMs).toBe(3_600_000);
+  });
+
+  it("uses the international endpoint for the generic MiniMax provider", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        base_resp: { status_code: 0 },
+        model_remains: [
+          {
+            model_name: "MiniMax-M*",
+            current_interval_usage_count: 10,
+            current_interval_total_count: 100,
+            current_weekly_usage_count: 20,
+            current_weekly_total_count: 200
+          }
+        ]
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "minimax",
+      credentials: [keyCredential("minimax", "minimax-key")],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.minimax.io/v1/api/openplatform/coding_plan/remains"
+    );
+    expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(90);
+    expect(findUsageWindow(report, "weekly")?.usedPercent).toBe(90);
   });
 });

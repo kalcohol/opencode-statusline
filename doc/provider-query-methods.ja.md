@@ -2,28 +2,18 @@
 
 [中文](provider-query-methods.md) | [English](provider-query-methods.en.md) | [日本語](provider-query-methods.ja.md)
 
-この文書は `opencode-statusline` が実装している provider usage/quota query methods を説明します。実装入口は `src/lib/providers.ts` で、provider-specific response を `UsageReport` に normalize し、`/usage` dialog と quota/balance statusline fields で再利用します。
+この文書は `opencode-statusline` が実装している provider usage/quota query methods を説明します。実装入口は `src/lib/providers.ts` で、provider-specific response を `UsageReport` に normalize し、`/quota` dialog と quota/balance statusline fields で再利用します。
 
-Statusline の `session_cost` field は、この provider quota collector を使いません。まず OpenCode assistant message に記録された `cost` を読み、存在しない場合だけ current model catalog pricing と token counts から equivalent cost を推定します。
+Statusline の `session_cost` field は、この provider quota collector を使いません。OpenCode V2 の `SessionInfo.cost` に provider 記録の cost が含まれるため、plugin は session subtree を直接合計します。
 
 ## Credential Resolution
 
-API-key providers は次の順序で credentials を解決します。
+Credentials は次の順序で解決します。
 
-1. provider-specific environment variables
-2. OpenCode config `provider.<id>.options.apiKey`
-3. runtime provider `key`
-4. OpenCode `auth.json` の API-key entries
+1. OpenCode V2 credential store（`context.client.credential.list()`）で integrationID に一致する active credential
+2. provider-specific environment variables
 
-`provider.<id>.options.apiKey` は `{env:VAR_NAME}` template をサポートします。OAuth providers は `auth.json` の OAuth token だけを読みます。
-
-default `auth.json` locations：
-
-| Platform | Path |
-| --- | --- |
-| All platforms | `${XDG_DATA_HOME:-~/.local/share}/opencode/auth.json` |
-
-`OPENCODE_AUTH_JSON` で上書きできます。
+OAuth providers は V2 credential store の OAuth token だけを読みます。plugin は `auth.json` を読まず、`OPENCODE_AUTH_JSON` もサポートしません。
 
 ## Provider Overview
 
@@ -37,9 +27,9 @@ default `auth.json` locations：
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | usage は `XIAOMI_MIMO_SESSION_COOKIE`、model calls は `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY` | plan/compensation/monthly credits quota、credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance、availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_API_KEY` または OpenCode が保存した provider key | 5h/weekly/monthly subscription quota |
-| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly/monthly quota、code review quota、credits |
-| OpenCode Zen | `opencode` | N/A | recognized, but no public quota API |
+| OpenCode Go | `opencode-go`, `opencodego` | 組み込み `usage.limits` 優先、`OPENCODE_API_KEY` または credential fallback | 5h/weekly/monthly subscription quota |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | V2 credential store OAuth entry | ChatGPT plan、5h/weekly/monthly quota、code review quota、credits |
+| OpenCode Zen | `opencode` | N/A | Console limits は組み込み `/usage` |
 
 Provider IDs は大文字小文字を区別せずに match します。
 
@@ -308,13 +298,33 @@ plugin は key label、limit/remaining limit、reset label、usage totals、BYOK
 
 ## OpenCode Go
 
-OpenCode Go は API-key authentication 対応の JSON usage endpoint を公開しています。plugin は冒頭の標準 API key resolution order を使います。`OPENCODE_API_KEY` を明示設定するか、OpenCode config、runtime provider、または `auth.json` に保存された `opencode-go` key をそのまま再利用できます。
+OpenCode V2 の組み込み usage service は Go limits を提供します。
+
+```text
+GET /api/experimental/usage/limits
+```
+
+plugin はまず `context.client.experimental.usage.limits()` を呼び、`data.go` を読みます。
+
+```ts
+data.go = {
+  rolling: { percent, limited, resetsAt },
+  weekly: { percent, limited, resetsAt },
+  monthly: { percent, limited, resetsAt }
+}
+```
+
+この経路は OpenCode Console credential を再利用し、追加 API key は不要です。
+
+`data.go` がない場合（Console 未ログインなど）は Go API-key endpoint に fallback します。
 
 ```text
 GET https://opencode.ai/zen/go/v1/usage
 Authorization: Bearer <token>
 User-Agent: OpenCode-Statusline/0.1
 ```
+
+fallback credential は V2 credential store または `OPENCODE_API_KEY` から取得します。
 
 Response shape：
 
@@ -354,7 +364,7 @@ Credentials：
 
 | Source | Keys |
 | --- | --- |
-| OpenCode `auth.json` OAuth entry | `openai`, `codex`, `chatgpt`, `opencode` |
+| OpenCode V2 credential store OAuth entry | `openai`, `codex`, `chatgpt` |
 
 Headers：
 
@@ -364,7 +374,7 @@ ChatGPT-Account-Id: <accountId>
 User-Agent: OpenCode-Statusline/0.1
 ```
 
-plugin は auth.json から `.access`、`.expires`、`.accountId` を読みます。`accountId` がない場合は JWT claim `https://api.openai.com/auth.chatgpt_account_id` の decode を試みます。
+plugin は V2 credential の `access`、`expires`、optional `metadata.accountID` を読みます。`accountID` がない場合は JWT claim `https://api.openai.com/auth.chatgpt_account_id` の decode を試みます。OpenCode Console (`opencode`) の OAuth credential は意図的に除外します。
 
 Response shape：
 
@@ -412,7 +422,7 @@ expired OAuth access tokens は unavailable として報告されます。この
 
 ## OpenCode Zen
 
-Provider id `opencode` は認識されますが、OpenCode Zen は現在 public balance/quota API を持ちません。collector は意図的に説明付き error を返し、`/usage` が quota fields が省略される理由を表示できるようにします。
+Provider id `opencode` の Console workspace/model limits は組み込み `/usage` が表示します。plugin の `/quota` は Zen に usage API がないと主張せず、`/usage` を案内します。
 
 ## Normalization Rules
 
@@ -421,11 +431,11 @@ Provider id `opencode` は認識されますが、OpenCode Zen は現在 public 
 | Field | Meaning |
 | --- | --- |
 | `windows[]` | 5h、daily、weekly、monthly、code review などの quota windows |
-| `balances[]` | `/usage` と `Provider balance` statusline field が使う account balance-like rows |
+| `balances[]` | `/quota` と `Provider balance` statusline field が使う account balance-like rows |
 | `items[]` | key label、model row、free tier、plan details などの miscellaneous labels |
 | `usedPercent` / `remainingPercent` | `0..100` に clamp |
 | `resetAtMs` / `resetAfterMs` | UI formatting で reset time を表示するために使用 |
 
-absolute reset timestamps は `/usage` で local time の固定幅 `YYYY-MM-DD HH:mm:ss` fields として表示します。relative reset durations は compact duration text のままです。
+absolute reset timestamps は `/quota` で local time の固定幅 `YYYY-MM-DD HH:mm:ss` fields として表示します。relative reset durations は compact duration text のままです。
 
-Quota collection は provider/model kind ごとに 60 秒 cache され、statusline fallback 用に stale result を 10 分保持します。`/usage` は fresh read を強制して cache を更新します。statusline quota/balance fields は cached rows を先に使い、並行する in-flight refresh を共有し、statusline 側で 2.5 秒 timeout も適用します。
+Quota collection は provider/model kind ごとに 30 秒 cache され、statusline fallback 用に stale result を 10 分保持します。`/quota` は fresh read を強制して cache を更新します。statusline quota/balance fields は cached rows を先に使い、並行する in-flight refresh を共有し、refresh 失敗時は stale data を使います。

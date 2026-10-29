@@ -2,28 +2,18 @@
 
 [中文](provider-query-methods.md) | [English](provider-query-methods.en.md) | [日本語](provider-query-methods.ja.md)
 
-本文记录 `opencode-statusline` 当前实现的 provider usage/quota 查询方法。实现入口在 `src/lib/providers.ts`，统一输出 `UsageReport`，供 `/usage` 对话框和 statusline quota/balance 字段复用。
+本文记录 `opencode-statusline` 当前实现的 provider usage/quota 查询方法。实现入口在 `src/lib/providers.ts`，统一输出 `UsageReport`，供 `/quota` 对话框和 statusline quota/balance 字段复用。
 
-Statusline 的 `session_cost` 字段不走这里的 provider quota collector。它优先读取 OpenCode assistant message 上记录的 `cost`，没有记录时才用当前模型 catalog pricing 和 token 数估算等价成本。
+Statusline 的 `session_cost` 字段不走这里的 provider quota collector。OpenCode V2 的 `SessionInfo.cost` 已经包含 provider 记录的成本，插件直接汇总 session 子树。
 
 ## 认证解析
 
-API key 类 provider 按以下顺序解析凭据：
+凭据按以下顺序解析：
 
-1. Provider 专用环境变量
-2. OpenCode 配置中的 `provider.<id>.options.apiKey`
-3. TUI runtime provider 对象上的 `provider.key`
-4. OpenCode `auth.json` 中的 API key 条目
+1. OpenCode V2 credential store（`context.client.credential.list()`）中匹配 integrationID 的 active credential
+2. Provider 专用环境变量
 
-`provider.<id>.options.apiKey` 支持 `{env:VAR_NAME}` 模板。OAuth 类 provider 只从 `auth.json` 读取 OAuth token。
-
-默认 `auth.json` 查找位置：
-
-| 平台 | 路径 |
-| --- | --- |
-| All platforms | `${XDG_DATA_HOME:-~/.local/share}/opencode/auth.json` |
-
-可用 `OPENCODE_AUTH_JSON` 覆盖 auth 文件路径。
+OAuth 类 provider 只从 V2 credential store 读取 OAuth token。插件不再读取 `auth.json`，也不再支持 `OPENCODE_AUTH_JSON`。
 
 ## Provider 总览
 
@@ -37,9 +27,9 @@ API key 类 provider 按以下顺序解析凭据：
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | `XIAOMI_MIMO_SESSION_COOKIE` for usage; `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY` for model calls | plan/compensation/monthly credits quota，credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance，availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label，remaining limit，usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_API_KEY` 或 OpenCode 已保存的 provider key | 5h/weekly/monthly subscription quota |
-| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan，5h/weekly/monthly quota，code review quota，credits |
-| OpenCode Zen | `opencode` | N/A | recognized, but no public quota API |
+| OpenCode Go | `opencode-go`, `opencodego` | 优先内置 `usage.limits`；回退 `OPENCODE_API_KEY` 或 credential | 5h/weekly/monthly subscription quota |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | V2 credential store OAuth entry | ChatGPT plan，5h/weekly/monthly quota，code review quota，credits |
+| OpenCode Zen | `opencode` | N/A | 使用内置 `/usage` 查看 Console limits |
 
 Provider IDs are matched case-insensitively.
 
@@ -308,13 +298,33 @@ OpenRouter does not expose 5h/weekly subscription windows in the same sense as c
 
 ## OpenCode Go
 
-OpenCode Go 提供 API-key 认证的 JSON 用量接口。插件按本文开头的通用 API key 顺序解析凭据；可显式设置 `OPENCODE_API_KEY`，也可直接复用 OpenCode config、runtime provider 或 `auth.json` 中保存的 `opencode-go` key。
+OpenCode V2 内置 usage 服务已经提供 Go 限额：
+
+```text
+GET /api/experimental/usage/limits
+```
+
+插件优先调用 `context.client.experimental.usage.limits()`，读取 `data.go`：
+
+```ts
+data.go = {
+  rolling: { percent, limited, resetsAt },
+  weekly: { percent, limited, resetsAt },
+  monthly: { percent, limited, resetsAt }
+}
+```
+
+这条路径复用 OpenCode Console credential，不需要额外 API key。
+
+如果没有 `data.go`（例如未登录 Console），插件回退到 Go API-key 接口：
 
 ```text
 GET https://opencode.ai/zen/go/v1/usage
 Authorization: Bearer <token>
 User-Agent: OpenCode-Statusline/0.1
 ```
+
+回退凭据来自 V2 credential store 或 `OPENCODE_API_KEY`。
 
 响应结构：
 
@@ -340,7 +350,7 @@ User-Agent: OpenCode-Statusline/0.1
 }
 ```
 
-`usage.rolling`、`usage.weekly`、`usage.monthly` 分别映射为 5h、weekly、monthly quota。`percent` 是已用百分比，`resetsAt` 是 ISO 8601 绝对重置时间；`status` 可能为 `ok` 或 `rate-limited`。此查询不再需要 workspace ID 或浏览器 cookie。
+`usage.rolling`、`usage.weekly`、`usage.monthly` 分别映射为 5h、weekly、monthly quota。`percent` 是已用百分比，`resetsAt` 是 ISO 8601 绝对重置时间；`status` 可能为 `ok` 或 `rate-limited`。
 
 ## OpenAI / ChatGPT / Codex OAuth
 
@@ -354,7 +364,7 @@ Credentials:
 
 | Source | Keys |
 | --- | --- |
-| OpenCode `auth.json` OAuth entry | `openai`, `codex`, `chatgpt`, `opencode` |
+| OpenCode V2 credential store OAuth entry | `openai`, `codex`, `chatgpt` |
 
 Headers:
 
@@ -364,7 +374,7 @@ ChatGPT-Account-Id: <accountId>
 User-Agent: OpenCode-Statusline/0.1
 ```
 
-The plugin reads `.access`, `.expires`, and `.accountId` from auth.json. If `accountId` is absent, it attempts to decode the JWT claim `https://api.openai.com/auth.chatgpt_account_id`.
+The plugin reads `access`, `expires`, and optional `metadata.accountID` from the V2 credential. If `accountID` is absent, it attempts to decode the JWT claim `https://api.openai.com/auth.chatgpt_account_id`. OpenCode Console (`opencode`) OAuth credentials are deliberately excluded.
 
 Response shape:
 
@@ -412,7 +422,7 @@ Expired OAuth access tokens are reported as unavailable; the plugin does not ref
 
 ## OpenCode Zen
 
-Provider id `opencode` is recognized, but OpenCode Zen currently has no public balance/quota API. The collector intentionally returns an explanatory error so `/usage` can show why quota fields are omitted.
+Provider id `opencode` 的 Console workspace/model limits 由内置 `/usage` 展示。插件 `/quota` 会提示改用 `/usage`，不再声称 Zen 没有任何 usage API。
 
 ## Normalization Rules
 
@@ -421,11 +431,11 @@ All collectors normalize provider-specific data into:
 | Field | Meaning |
 | --- | --- |
 | `windows[]` | quota windows such as 5h, daily, weekly, monthly, code review |
-| `balances[]` | account balance-like rows used by `/usage` and the `Provider balance` statusline field |
+| `balances[]` | account balance-like rows used by `/quota` and the `Provider balance` statusline field |
 | `items[]` | miscellaneous labels such as key label, model row, free tier, plan details |
 | `usedPercent` / `remainingPercent` | clamped to `0..100` |
 | `resetAtMs` / `resetAfterMs` | used by UI formatting to show reset time |
 
-Absolute reset timestamps are rendered by `/usage` in local time with fixed-width `YYYY-MM-DD HH:mm:ss` fields. Relative reset durations still use compact duration text.
+Absolute reset timestamps are rendered by `/quota` in local time with fixed-width `YYYY-MM-DD HH:mm:ss` fields. Relative reset durations still use compact duration text.
 
-Quota collection is cached for 60 seconds per provider/model kind, with stale results kept for 10 minutes for statusline fallback. `/usage` forces a fresh read and updates the cache; statusline quota/balance fields use cached rows first, share concurrent in-flight refreshes, and have a 2.5 second statusline-side timeout.
+Quota collection is cached for 30 seconds per provider/model kind, with stale results kept for 10 minutes for statusline fallback. `/quota` forces a fresh read and updates the cache; statusline quota/balance fields use cached rows first, share concurrent in-flight refreshes, and use stale data when a refresh fails.

@@ -2,224 +2,131 @@
 
 [中文](README.md) | [English](README.en.md) | [日本語](README.ja.md)
 
-OpenCode TUI 向けのプラグインです。provider の usage/quota を TUI dialog で表示し、prompt statusline に任意の状態フィールドを追加できます。
+OpenCode V2 TUI プラグインです。prompt footer にカスタム statusline を表示し、サードパーティ provider の quota/balance を確認できます。表示は TUI 内だけで、モデルのコンテキストには入りません。
 
-主な機能：
+要件:
 
-- `/usage`：現在のモデルが使っている provider の quota、usage、balance などを TUI dialog で確認できます。
-- `/statusline`：OpenCode prompt のモデル/provider 表示の後ろに追加するフィールドを選択できます。
-- 選択順どおりに表示される色付き statusline セグメント。
-- チャットコンテキストを汚染しません。usage と statusline の情報は TUI にだけ表示され、会話履歴には入りません。
+- OpenCode `2.2.x` 以降
+- TUI-only パッケージ（`cli.json` で設定）
+- ローカルパスインストール用。`private` のため npm には公開しません
 
-## スクリーンショット
+## 機能
 
-OpenCode prompt に追加された statusline フィールドの例：
+- `/statusline`: statusline フィールドの選択と並び替え。
+- `/quota`: 現在の provider の quota、usage、balance を表示。
+- `prompt.footer.status` slot に描画し、footer のレイアウトは OpenCode が管理。
+- デフォルトでは組み込み footer と重複しないフィールドのみ表示。
+- コンテキストを汚染しません。
 
-![OpenCode prompt statusline の例。repository、branch、git diff、context、cost、token、TTFT、generation speed fields を表示](doc/images/statusline-overview.jpg)
-
-`/usage` provider quota dialog：
-
-![OpenCode usage dialog showing provider, model, auth source, plan, and quota windows](doc/images/usage-dialog.jpg)
+> 組み込み `/usage` は OpenCode Console/Go の limits、組み込み `/status` は MCP server の状態です。このプラグインの `/quota` はサードパーティ provider 向けで、OpenCode Go の簡易表示にも対応します。
 
 ## インストール
-
-プラグインを clone して build します：
 
 ```sh
 git clone https://github.com/kalcohol/opencode-statusline.git
 cd opencode-statusline
 npm install
 npm run build
-```
-
-clone したパッケージの絶対パスを確認します：
-
-```sh
 pwd
 ```
 
-そのパスを OpenCode の TUI 設定に追加します。通常のグローバル設定ファイルは次の場所です：
-
-```text
-${XDG_CONFIG_HOME:-~/.config}/opencode/tui.jsonc
-```
-
-ディレクトリやファイルがまだない場合は作成して開きます：
-
-```sh
-mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-${EDITOR:-vi} "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/tui.jsonc"
-```
-
-`pwd` で表示された絶対パスを使います：
+グローバルの `cli.json` に絶対パスを追加します。
 
 ```jsonc
 {
-  "$schema": "https://opencode.ai/tui.json",
-  "plugin": ["/absolute/path/to/opencode-statusline"]
+  "$schema": "https://opencode.ai/v2/cli.json",
+  "plugins": ["/absolute/path/to/opencode-statusline"]
 }
 ```
 
-すでに他のプラグインがある場合は、既存の `plugin` 配列にこのパッケージのパスを追加します：
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/tui.json",
-  "plugin": [
-    "/absolute/path/to/another-plugin",
-    "/absolute/path/to/opencode-statusline"
-  ]
-}
-```
-
-プラグイン設定を変更した後、または再 build した後は OpenCode TUI を再起動してください。OpenCode 内で `/usage` または `/statusline` を実行できれば、プラグインは読み込まれています。
-
-既存 clone を更新する場合：
-
-```sh
-cd /absolute/path/to/opencode-statusline
-git pull
-npm install
-npm run build
-```
-
-その後 OpenCode TUI を再起動します。
-
-現在のプラグインでは `opencode.json` は必須ではありませんが、同じパッケージパスを入れておいても問題ありません：
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["/absolute/path/to/opencode-statusline"]
-}
-```
-
-よく使われるグローバル設定場所：
+既定の場所:
 
 ```text
-${XDG_CONFIG_HOME:-~/.config}/opencode/tui.jsonc
-${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.jsonc
+${XDG_CONFIG_HOME:-~/.config}/opencode/cli.json
 ```
 
-プロジェクトローカル設定も使えます：
-
-```text
-<project>/.opencode/tui.jsonc
-<project>/.opencode/opencode.jsonc
-```
-
-OpenCode は現在のプロジェクトディレクトリから上位方向に `tui.json(c)` と `opencode.json(c)` を探します。`OPENCODE_CONFIG_DIR` が設定されている場合は、グローバル既定の代わりにそのディレクトリを使います。
+OpenCode を再起動してください。TUI-only パッケージなので `opencode.json` や旧 `tui.json` には追加しません。
 
 ## コマンド
 
-### `/usage`
-
-現在のモデルの provider usage/quota を表示します。この dialog はモデルリクエストを送らず、usage 情報を会話にも書き込みません。
-
-現在の session、直近の TUI モデル状態、または `config.model` から active provider/model を解決します。`/usage` を開くたびに provider データを新しく取得します。
-
-reset 時刻はローカル時刻で、固定幅の `YYYY-MM-DD HH:mm:ss` 形式で表示します。
-
 ### `/statusline`
 
-フィールド選択 UI を開きます。フィールドを選ぶと有効/無効が切り替わります。選択した順序が prompt statusline の表示順になります。
+フィールド選択ダイアログを開きます。選択順が表示順になります。
 
-利用できるフィールド：
-
-| フィールド | 説明 |
-| --- | --- |
-| Repository | worktree または directory の basename |
-| Branch | 現在の git branch 名 |
-| Git diff stats | tracked file の staged+unstaged git diff 行数。`+123,-45` 形式 |
-| Context used | 最新の token 付き assistant message の context 推定値 |
-| Context remaining | model context limit から現在の context 推定値を引いた値 |
-| Context length | 現在の model context limit |
-| Context used/total | 使用済み/総 context window のコンパクト表示 |
-| TTFT/speed | 最初の text/reasoning output までの近似時間と output+reasoning token 速度。tool execution time は除外します |
-| Subagent status | active subagent または child-session の状態。idle/completed の child は省略します |
-| Main agent status | 現在の main session 状態。`agent` prefix は付けません。一時的な `queued`/`pending` は省略します |
-| 5h quota | provider の 5h quota 使用率。利用可能な場合のみ表示 |
-| Weekly quota | provider の weekly quota 使用率。利用可能な場合のみ表示 |
-| Provider balance | provider が返す prepaid balance または remaining limit。`bal $12.34` 形式 |
-| Session input/output tokens | session と nested descendant-session の累計 input/output tokens。`<input> in / <output> out` 形式 |
-| Session total tokens | session と nested descendant-session の累計 total tokens。`<total> used` 形式。reasoning/cache tokens も含めます |
-| Session cost | session と nested descendant-session の累計 cost。`cost $0.02` 形式。model pricing から推定した場合は `eq $0.02` と表示します |
-
-利用できない provider/model データは省略されます。たとえば OpenRouter は balance と usage totals を持ちますが、coding plan と同じ意味の 5h subscription quota window はないため `5h quota` は表示されません。
-
-`Provider balance` は `/usage` dialog の balance rows を再利用します。remaining/limit remaining を優先し、次に balance/credits rows を表示します。DeepSeek、OpenRouter、OpenAI/Codex credits など balance data がある provider では表示され、money amount のない純粋な subscription quota data では省略されます。
-
-Quota/balance fields は provider usage cache を再利用します。手動で `/usage` を実行した後は、短い `queued`/`pending` 状態や session busy 中でも statusline は cached data を優先し、fields を空にしません。
-
-`Git diff stats` は local worktree に対して一度だけ `git diff HEAD --numstat` を実行し、staged/unstaged の重複計数を避けます。untracked file と binary file は含めません。
-
-subscription や coding plan provider では、`Session cost` は実際の課金額ではなく token 単価による等価推定になることがあります。OpenCode が message に記録した cost を優先し、ない場合だけ model catalog pricing へ fallback します。
-
-Statusline は全 platform で同じ precompiled OpenTUI 0.4 path を使います。`session_prompt` を wrap し、fields を Prompt の `right` content に入れ、既存の `session_prompt_right` content も保持します。real terminal column width に合わせて truncate し、prompt の折り返しを防ぎます。
-
-## 対応 Providers
-
-`/usage` と quota statusline フィールドは現在次の provider ID に対応しています。大文字小文字は区別しません。
-
-| Provider / plan | Provider IDs | 認証情報のヒント | 利用可能な場合に表示するデータ |
-| --- | --- | --- | --- |
-| Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota、time quota |
-| Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota、time quota |
-| Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage windows、存在する場合は 5h window |
-| MiniMax coding plan | `minimax`, `minimax-coding-plan` | `MINIMAX_CODING_PLAN_API_KEY`, `MINIMAX_API_KEY` | international 5h と weekly token quota |
-| MiniMax CN coding plan | `minimax-cn`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | China 5h と weekly token quota |
-| Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | model calls は `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY`、usage は `XIAOMI_MIMO_SESSION_COOKIE` が必要 | plan/compensation/monthly credits quota、credits remaining |
-| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance と availability |
-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、total limit、usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_API_KEY` または OpenCode が保存した provider key | 5h、weekly、monthly subscription quota |
-| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly/monthly quota、code review quota、credits |
-
-API key provider は次の順序で認証情報を解決します：
-
-1. environment variables
-2. OpenCode `provider.<id>.options.apiKey`
-3. runtime provider key
-4. OpenCode `auth.json`
-
-OpenCode Go は通常の Go API key を Bearer token として使い、`GET https://opencode.ai/zen/go/v1/usage` から quota を取得します。通常は OpenCode config または `auth.json` の `opencode-go` key をそのまま再利用でき、`OPENCODE_API_KEY` の明示設定にも対応します。workspace ID と browser cookie は不要です。
-
-OpenAI/ChatGPT/Codex usage は `auth.json` の OAuth を使います。`opencode` / OpenCode Zen は認識されますが、OpenCode Zen は現在 public balance/quota API を公開していないため quota フィールドは省略されます。
-
-Xiaomi MiMo Token Plan の `tp-*` key は OpenCode の model calls 用です。現在の Xiaomi usage endpoint は SSO 配下にあり、`tp-*` key は拒否されます。`/usage` と statusline quota/balance fields で Xiaomi data を表示するには、ログイン済み browser session から `XIAOMI_MIMO_SESSION_COOKIE` を設定してください。cookie を repository に commit しないでください。
-
-`tp-*` key だけで cookie がない場合でも、Xiaomi model の識別はできます。context、session tokens、session cost、TTFT、git diff など provider usage API を使わない statusline fields はそのまま動作します。Xiaomi quota fields は省略されるか、`/usage` で cookie missing を表示します。
-
-詳細な endpoint は [doc/provider-query-methods.ja.md](doc/provider-query-methods.ja.md) を参照してください。
-
-## 状態ファイル
-
-Statusline のフィールド選択は次に保存されます：
+引数でも設定できます。
 
 ```text
-${XDG_DATA_HOME:-~/.local/share}/opencode/statusline-plugin.json
+/statusline branch repo git_diff_stats quota_5h quota_weekly
+/statusline clear
 ```
 
-上書き：
+### `/quota`
+
+現在の provider の quota/balance を表示します。OpenCode Go は組み込み `usage.limits` を優先し、Console データがない場合は Go API key にフォールバックします。
+
+- `/quota`: サードパーティ provider の quota（Z.ai、Kimi、MiniMax、MiMo、DeepSeek、OpenRouter、OpenAI OAuth）+ OpenCode Go の簡易表示。
+- `/usage`: 組み込みの OpenCode Console workspace/model limits と Go limits。
+
+## Statusline フィールド
+
+| フィールド | 説明 | 組み込み footer |
+| --- | --- | --- |
+| `repo` | リポジトリ/ディレクトリ名 | sidebar にパス |
+| `branch` | 現在の git branch | sidebar に `path:branch` |
+| `git_diff_stats` | working tree の増減 `+12,-3` | コンパクトな合計なし |
+| `context_used` | 現在のコンテキスト token | あり |
+| `context_remaining` | 残りコンテキスト | なし |
+| `context_length` | コンテキスト上限 | なし |
+| `context_window` | 使用/上限 | あり |
+| `generation_metrics` | 現在 turn の生成速度 `gen 42 tok/s` | なし |
+| `subagent_status` | 実行中 subagent 数 | あり |
+| `agent_status` | メイン session の実行状態 | あり（spinner） |
+| `quota_5h` | provider 5h quota 使用率 | Console/Go のみ |
+| `quota_weekly` | provider weekly quota 使用率 | Console/Go のみ |
+| `provider_balance` | 残高/remaining limit | Console のみ |
+| `session_io` | session subtree の input/output token | なし |
+| `session_total` | session subtree の合計 token | なし |
+| `session_cost` | session subtree のコスト | あり |
+
+デフォルト:
 
 ```text
-OPENCODE_STATUSLINE_CONFIG=/path/to/statusline-plugin.json
+repo | branch | git_diff_stats | quota_5h | quota_weekly | provider_balance
 ```
 
-TUI でモデルを切り替えた後、プラグインは OpenCode の直近モデル状態を次から読みます：
+重複フィールドは選択可能ですが、デフォルトには含めません。
 
-```text
-${XDG_STATE_HOME:-~/.local/state}/opencode/model.json
-```
+`generation_metrics` は V2 の step 単位 `streamed - created` を使うため、provider-active の生成速度のみです。V2 には信頼できる text part の初回 token timestamp がないため、TTFT は表示しません。
 
-state directory は次で上書きできます：
+## Providers
 
-```text
-OPENCODE_STATUSLINE_STATE_DIR=/path/to/opencode-state
-```
+| Provider / plan | Provider IDs | 認証 |
+| --- | --- | --- |
+| Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY` / `ZAI_CODING_PLAN_API_KEY` または credential |
+| Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY` / `ZHIPU_CODING_PLAN_API_KEY` または credential |
+| Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY` / `KIMI_CODE_API_KEY` または credential |
+| MiniMax coding plan | `minimax`, `minimax-coding-plan` | `MINIMAX_CODING_PLAN_API_KEY` / `MINIMAX_API_KEY` または credential |
+| MiniMax CN | `minimax-cn`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` または credential |
+| Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | モデルは API key、usage は `XIAOMI_MIMO_SESSION_COOKIE` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` または credential |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` または credential |
+| OpenCode Go | `opencode-go`, `opencodego` | 組み込み Console usage 優先、`OPENCODE_API_KEY` または credential fallback |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | V2 credential store の OAuth |
+
+認証順:
+
+1. OpenCode V2 credential store（`context.client.credential.list()`）
+2. 環境変数
+
+`auth.json` は読みません。OpenCode Zen (`opencode`) の Console limits は組み込み `/usage` を使ってください。
+
+詳細は [doc/provider-query-methods.ja.md](doc/provider-query-methods.ja.md) を参照してください。
+
+## 設定保存
+
+フィールド選択は `context.storage.store` に保存され、plugin id ごとに名前空間化されます。`statusline-plugin.json` や `OPENCODE_STATUSLINE_CONFIG` / `OPENCODE_STATUSLINE_STATE_DIR` は不要です。
 
 ## 開発
-
-よく使うコマンド：
 
 ```sh
 npm run typecheck
@@ -227,31 +134,6 @@ npm test
 npm run build
 ```
 
-ローカルの `/tmp` mount が Node/Vitest の書き込みを拒否する場合は、`TMPDIR` を ignored なプロジェクト内一時ディレクトリへ向けます：
+`npm run build` は `tsc` の後に Babel + Solid preset で `dist/**/*.jsx` を事前コンパイルします。OpenCode は `dist/tui.js` を読み込むため、ソース変更後は再 build が必要です。
 
-```sh
-mkdir -p .tmp
-TMPDIR=$PWD/.tmp npm test
-```
-
-OpenCode は precompiled TUI entry を `dist/tui.js` から解決します。source を変更した後は、TUI で試す前に `npm run build` を実行してください。
-
-Source layout：
-
-```text
-src/
-  index.ts                 package server entry
-  plugin.ts                empty server shim
-  tui.tsx                  TUI slots, dialogs, slash commands, statusline rendering
-  lib/
-    auth.ts                env/config/auth.json credential lookup
-    opencode-client.ts     active model resolution helpers
-    providers.ts           provider usage collectors
-    statusline.ts          statusline field renderer
-    statusline-config.ts   persisted field selection
-    tui-usage.ts           /usage dialog text builder
-    usage-format.ts        usage report formatting
-    format.ts              shared formatting helpers
-```
-
-Architecture details は [doc/plugin-architecture.ja.md](doc/plugin-architecture.ja.md) を参照してください。
+詳細は [doc/plugin-architecture.ja.md](doc/plugin-architecture.ja.md) を参照してください。

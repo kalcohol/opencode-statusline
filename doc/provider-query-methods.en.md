@@ -2,28 +2,18 @@
 
 [中文](provider-query-methods.md) | [English](provider-query-methods.en.md) | [日本語](provider-query-methods.ja.md)
 
-This document describes the provider usage/quota query methods implemented by `opencode-statusline`. The implementation entry is `src/lib/providers.ts`, which normalizes provider-specific responses into `UsageReport` for the `/usage` dialog and quota/balance statusline fields.
+This document describes the provider usage/quota query methods implemented by `opencode-statusline`. The implementation entry is `src/lib/providers.ts`, which normalizes provider-specific responses into `UsageReport` for the `/quota` dialog and quota/balance statusline fields.
 
-The `session_cost` statusline field does not use this provider quota collector. It first reads `cost` recorded on OpenCode assistant messages; when that is absent, it estimates equivalent cost from current model catalog pricing and token counts.
+The `session_cost` statusline field does not use this provider quota collector. OpenCode V2 `SessionInfo.cost` already contains provider-recorded cost; the plugin sums the session subtree directly.
 
 ## Credential Resolution
 
-API-key providers resolve credentials in this order:
+Credentials resolve in this order:
 
-1. provider-specific environment variables
-2. OpenCode config `provider.<id>.options.apiKey`
-3. runtime provider `key`
-4. API-key entries in OpenCode `auth.json`
+1. active credential matching the integrationID in the OpenCode V2 credential store (`context.client.credential.list()`)
+2. provider-specific environment variables
 
-`provider.<id>.options.apiKey` supports `{env:VAR_NAME}` templates. OAuth providers only read OAuth tokens from `auth.json`.
-
-Default `auth.json` locations:
-
-| Platform | Path |
-| --- | --- |
-| All platforms | `${XDG_DATA_HOME:-~/.local/share}/opencode/auth.json` |
-
-Override with `OPENCODE_AUTH_JSON`.
+OAuth providers only read OAuth tokens from the V2 credential store. The plugin no longer reads `auth.json` or supports `OPENCODE_AUTH_JSON`.
 
 ## Provider Overview
 
@@ -37,9 +27,9 @@ Override with `OPENCODE_AUTH_JSON`.
 | Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | `XIAOMI_MIMO_SESSION_COOKIE` for usage; `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY` for model calls | plan/compensation/monthly credits quota, credits remaining |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance, availability |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label, remaining limit, usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_API_KEY` or the provider key saved by OpenCode | 5h/weekly/monthly subscription quota |
-| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan, 5h/weekly/monthly quota, code review quota, credits |
-| OpenCode Zen | `opencode` | N/A | recognized, but no public quota API |
+| OpenCode Go | `opencode-go`, `opencodego` | built-in `usage.limits` first; `OPENCODE_API_KEY` or credential fallback | 5h/weekly/monthly subscription quota |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | V2 credential store OAuth entry | ChatGPT plan, 5h/weekly/monthly quota, code review quota, credits |
+| OpenCode Zen | `opencode` | N/A | use built-in `/usage` for Console limits |
 
 Provider IDs are matched case-insensitively.
 
@@ -308,13 +298,33 @@ The plugin shows key label, limit/remaining limit, reset label, usage totals, BY
 
 ## OpenCode Go
 
-OpenCode Go exposes an API-key-authenticated JSON usage endpoint. The plugin uses the standard API-key resolution order described above: set `OPENCODE_API_KEY` explicitly, or reuse the `opencode-go` key saved in OpenCode config, the runtime provider, or `auth.json`.
+The OpenCode V2 built-in usage service already exposes Go limits:
+
+```text
+GET /api/experimental/usage/limits
+```
+
+The plugin first calls `context.client.experimental.usage.limits()` and reads `data.go`:
+
+```ts
+data.go = {
+  rolling: { percent, limited, resetsAt },
+  weekly: { percent, limited, resetsAt },
+  monthly: { percent, limited, resetsAt }
+}
+```
+
+This path reuses the OpenCode Console credential and needs no extra API key.
+
+When `data.go` is unavailable (for example, no Console sign-in), the plugin falls back to the Go API-key endpoint:
 
 ```text
 GET https://opencode.ai/zen/go/v1/usage
 Authorization: Bearer <token>
 User-Agent: OpenCode-Statusline/0.1
 ```
+
+Fallback credentials come from the V2 credential store or `OPENCODE_API_KEY`.
 
 Response shape:
 
@@ -354,7 +364,7 @@ Credentials:
 
 | Source | Keys |
 | --- | --- |
-| OpenCode `auth.json` OAuth entry | `openai`, `codex`, `chatgpt`, `opencode` |
+| OpenCode V2 credential store OAuth entry | `openai`, `codex`, `chatgpt` |
 
 Headers:
 
@@ -364,7 +374,7 @@ ChatGPT-Account-Id: <accountId>
 User-Agent: OpenCode-Statusline/0.1
 ```
 
-The plugin reads `.access`, `.expires`, and `.accountId` from auth.json. If `accountId` is absent, it attempts to decode the JWT claim `https://api.openai.com/auth.chatgpt_account_id`.
+The plugin reads `access`, `expires`, and optional `metadata.accountID` from the V2 credential. If `accountID` is absent, it attempts to decode the JWT claim `https://api.openai.com/auth.chatgpt_account_id`. OpenCode Console (`opencode`) OAuth credentials are deliberately excluded.
 
 Response shape:
 
@@ -412,7 +422,7 @@ Expired OAuth access tokens are reported as unavailable; the plugin does not ref
 
 ## OpenCode Zen
 
-Provider id `opencode` is recognized, but OpenCode Zen currently has no public balance/quota API. The collector intentionally returns an explanatory error so `/usage` can show why quota fields are omitted.
+Provider id `opencode` Console workspace/model limits are shown by the built-in `/usage`. The plugin `/quota` points users to `/usage` instead of claiming Zen has no usage API.
 
 ## Normalization Rules
 
@@ -421,11 +431,11 @@ All collectors normalize provider-specific data into:
 | Field | Meaning |
 | --- | --- |
 | `windows[]` | quota windows such as 5h, daily, weekly, monthly, code review |
-| `balances[]` | account balance-like rows used by `/usage` and the `Provider balance` statusline field |
+| `balances[]` | account balance-like rows used by `/quota` and the `Provider balance` statusline field |
 | `items[]` | miscellaneous labels such as key label, model row, free tier, plan details |
 | `usedPercent` / `remainingPercent` | clamped to `0..100` |
 | `resetAtMs` / `resetAfterMs` | used by UI formatting to show reset time |
 
-Absolute reset timestamps are rendered by `/usage` in local time with fixed-width `YYYY-MM-DD HH:mm:ss` fields. Relative reset durations still use compact duration text.
+Absolute reset timestamps are rendered by `/quota` in local time with fixed-width `YYYY-MM-DD HH:mm:ss` fields. Relative reset durations still use compact duration text.
 
-Quota collection is cached for 60 seconds per provider/model kind, with stale results kept for 10 minutes for statusline fallback. `/usage` forces a fresh read and updates the cache; statusline quota/balance fields use cached rows first, share concurrent in-flight refreshes, and have a 2.5 second statusline-side timeout.
+Quota collection is cached for 30 seconds per provider/model kind, with stale results kept for 10 minutes for statusline fallback. `/quota` forces a fresh read and updates the cache; statusline quota/balance fields use cached rows first, share concurrent in-flight refreshes, and use stale data when a refresh fails.

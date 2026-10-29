@@ -1,11 +1,11 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2023",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "preserve",
     "jsxImportSource": "@opentui/solid",
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2023", "DOM"],
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,

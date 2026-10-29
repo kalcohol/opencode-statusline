@@ -2,224 +2,139 @@
 
 [中文](README.md) | [English](README.en.md) | [日本語](README.ja.md)
 
-OpenCode TUI 插件，用于在 TUI 内查看 provider usage/quota，并按需扩展 prompt statusline。
+OpenCode V2 TUI 插件：在 prompt footer 中显示自定义 statusline，并查询第三方 provider 的 quota/balance。所有信息只渲染在 TUI 内，不写入模型上下文。
 
-它提供：
+要求：
 
-- `/usage`：在 TUI dialog 中查看当前活跃模型所属 provider 的 quota、usage、balance 等信息。
-- `/statusline`：选择要追加到 OpenCode prompt 模型/provider 后面的状态字段。
-- 彩色 statusline 字段，并严格按选择顺序显示。
-- 不污染聊天上下文：usage 和 statusline 信息只渲染在 TUI 中，不写入对话历史。
+- OpenCode `2.2.x` 或更新版本
+- TUI-only 插件（配置在 `cli.json`）
+- 本地路径安装；项目为 `private`，不发布 npm
 
-## 截图
+## 功能
 
-OpenCode prompt 中追加的示例 statusline 字段：
+- `/statusline`：选择、排序 statusline 字段。
+- `/quota`：查看当前 provider 的 quota、usage、balance。
+- 状态栏渲染在 `prompt.footer.status`，由 OpenCode 负责 footer 布局。
+- 默认字段避开 OpenCode 内置 footer 已显示的信息。
+- 不污染聊天上下文。
 
-![OpenCode prompt statusline 示例，包含仓库、分支、git diff、上下文、成本、token、TTFT 和生成速度字段](doc/images/statusline-overview.jpg)
-
-`/usage` provider quota dialog：
-
-![OpenCode usage dialog showing provider, model, auth source, plan, and quota windows](doc/images/usage-dialog.jpg)
+> 内置 `/usage` 显示 OpenCode Console/Go 的 workspace limits；内置 `/status` 显示 MCP server 状态。本插件的 `/quota` 面向第三方 provider，并提供 OpenCode Go 的便捷查询，三者不冲突。
 
 ## 安装
-
-克隆并构建插件：
 
 ```sh
 git clone https://github.com/kalcohol/opencode-statusline.git
 cd opencode-statusline
 npm install
 npm run build
-```
-
-查看插件目录的绝对路径：
-
-```sh
 pwd
 ```
 
-把这个绝对路径加入 OpenCode 的 TUI 配置。常见的全局配置文件是：
-
-```text
-${XDG_CONFIG_HOME:-~/.config}/opencode/tui.jsonc
-```
-
-如果目录或文件还不存在，可以先创建并打开：
-
-```sh
-mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-${EDITOR:-vi} "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/tui.jsonc"
-```
-
-使用 `pwd` 输出的绝对路径：
+把 `pwd` 的绝对路径写入全局 `cli.json`：
 
 ```jsonc
 {
-  "$schema": "https://opencode.ai/tui.json",
-  "plugin": ["/absolute/path/to/opencode-statusline"]
+  "$schema": "https://opencode.ai/v2/cli.json",
+  "plugins": ["/absolute/path/to/opencode-statusline"]
 }
 ```
 
-如果已经有其他插件，把本插件路径追加到已有的 `plugin` 数组：
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/tui.json",
-  "plugin": [
-    "/absolute/path/to/another-plugin",
-    "/absolute/path/to/opencode-statusline"
-  ]
-}
-```
-
-修改插件配置或重新构建后，重启 OpenCode TUI。进入 OpenCode 后运行 `/usage` 或 `/statusline`，能打开对应界面就说明插件已加载。
-
-更新已有 clone：
-
-```sh
-cd /absolute/path/to/opencode-statusline
-git pull
-npm install
-npm run build
-```
-
-然后重启 OpenCode TUI。
-
-当前插件不要求配置 `opencode.json`，但在其中保留同一个插件路径也没有问题：
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["/absolute/path/to/opencode-statusline"]
-}
-```
-
-常见全局配置位置：
+默认位置：
 
 ```text
-${XDG_CONFIG_HOME:-~/.config}/opencode/tui.jsonc
-${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.jsonc
+${XDG_CONFIG_HOME:-~/.config}/opencode/cli.json
 ```
 
-也支持项目内配置：
+然后重启 OpenCode。
 
-```text
-<project>/.opencode/tui.jsonc
-<project>/.opencode/opencode.jsonc
-```
-
-OpenCode 会从当前项目目录向上查找 `tui.json(c)` 和 `opencode.json(c)`。如果设置了 `OPENCODE_CONFIG_DIR`，则使用该目录代替全局默认目录。
+这是 TUI-only 包，**不要**把它写进 `opencode.json` 或旧的 `tui.json`。
 
 ## 命令
 
-### `/usage`
-
-显示当前活跃模型所属 provider 的 usage/quota 信息。这个 dialog 不会发起模型请求，也不会把 usage 信息写入对话。
-
-命令会从当前 session、近期 TUI 模型状态或 `config.model` 解析活跃 provider/model。每次打开 `/usage` 都会重新请求 provider 数据。
-
-重置时间按本地时间显示，并使用固定宽度的 `YYYY-MM-DD HH:mm:ss` 格式。
-
 ### `/statusline`
 
-打开字段选择器。选择字段会切换启用状态；字段选择顺序就是 prompt statusline 中的显示顺序。
+打开字段选择器。选中字段会切换启用状态，选择顺序就是显示顺序。
 
-可用字段：
+也可以直接传字段：
 
-| 字段 | 说明 |
-| --- | --- |
-| Repository | worktree 或目录 basename |
-| Branch | 当前 git 分支名 |
-| Git diff stats | tracked 文件的 staged+unstaged 增删行数，格式为 `+123,-45` |
-| Context used | 最新带有效 token 的 assistant 消息上下文估算 |
-| Context remaining | 模型上下文上限减去当前上下文估算 |
-| Context length | 当前模型上下文上限 |
-| Context used/total | 紧凑的已用/总上下文显示 |
-| TTFT/speed | 到首个 text/reasoning 输出的近似延迟，以及 output+reasoning token 生成速度；tool 执行时间不计入 |
-| Subagent status | 活跃 subagent 或 child-session 状态；idle/completed 的 child 会被省略 |
-| Main agent status | 当前主 session 状态，不带 `agent` 前缀；瞬时 `queued`/`pending` 会省略 |
-| 5h quota | provider 5h quota 使用百分比，有数据时显示 |
-| Weekly quota | provider weekly quota 使用百分比，有数据时显示 |
-| Provider balance | provider 返回的预付费余额或 remaining limit，格式为 `bal $12.34` |
-| Session input/output tokens | 当前 session 和嵌套 descendant-session 累计输入/输出 token，格式为 `<input> in / <output> out` |
-| Session total tokens | 当前 session 和嵌套 descendant-session 累计总 token，格式为 `<total> used`；reasoning/cache token 会计入 |
-| Session cost | 当前 session 和嵌套 descendant-session 累计成本，格式为 `cost $0.02`；按模型价格估算时显示为 `eq $0.02` |
+```text
+/statusline branch repo git_diff_stats quota_5h quota_weekly
+/statusline clear
+```
 
-没有的数据会自动省略。例如 OpenRouter 有 balance 和 usage totals，但没有 coding plan 意义上的 5h subscription quota window，因此不会显示 `5h quota`。
+### `/quota`
 
-`Provider balance` 复用 `/usage` dialog 的余额数据，优先显示 remaining/limit remaining，其次显示 balance/credits。DeepSeek、OpenRouter、OpenAI/Codex credits 等 provider 有余额数据时会显示；纯订阅 quota 没有钱数时会省略。
+显示当前 provider 的 quota/balance。OpenCode Go 优先复用内置 `usage.limits`，没有 Console 数据时回退到 Go API key。
 
-Quota/balance 字段会复用 provider usage 缓存；`/usage` 手动刷新后，statusline 即使遇到短暂 `queued`/`pending` 或正在 busy，也会优先显示已有缓存，而不是把字段清空。
+`/quota` 与内置 `/usage` 的区别：
 
-`Git diff stats` 只读取本地 git 工作树，使用一次 `git diff HEAD --numstat` 统计 tracked 文件，避免 staged/unstaged 重复计数；未跟踪文件和二进制文件不会计入。
+- `/quota`：第三方 coding plan/provider quota（Z.ai、Kimi、MiniMax、MiMo、DeepSeek、OpenRouter、OpenAI OAuth）+ OpenCode Go 便捷查询。
+- `/usage`：OpenCode Console 的 workspace/model limits 和 Go 限额。
 
-对于订阅制或 coding plan provider，`Session cost` 可能只是按 token 单价折算的等价估算，不一定代表真实扣费。它优先使用 OpenCode 记录在 message 上的 cost；没有记录时才回退到模型 catalog pricing。
+## Statusline 字段
 
-Statusline 在所有平台使用同一套预编译 OpenTUI 0.4 路径：包装 `session_prompt`，把字段放入 Prompt 的 `right` 内容，并保留已有 `session_prompt_right` 内容。字段会按真实终端列宽动态截断，避免换行挤坏 prompt 布局。
+| 字段 | 说明 | 内置 footer 是否已有 |
+| --- | --- | --- |
+| `repo` | 仓库/目录 basename | sidebar 有路径 |
+| `branch` | 当前 git 分支 | sidebar 有 `path:branch` |
+| `git_diff_stats` | working tree 增删行数 `+12,-3` | 无紧凑 totals |
+| `context_used` | 当前上下文 token | 是 |
+| `context_remaining` | 上下文剩余 | 否 |
+| `context_length` | 上下文上限 | 否 |
+| `context_window` | 已用/总上下文 | 是（tokens + %） |
+| `generation_metrics` | 当前 turn 的生成速度 `gen 42 tok/s` | 否 |
+| `subagent_status` | running subagent 数量 | 是 |
+| `agent_status` | 主 session 是否 running | 是（spinner） |
+| `quota_5h` | provider 5h quota 使用百分比 | 仅 Console/Go |
+| `quota_weekly` | provider weekly quota 使用百分比 | 仅 Console/Go |
+| `provider_balance` | 余额/remaining limit | 仅 Console |
+| `session_io` | 当前 session 子树输入/输出 token | 否 |
+| `session_total` | 当前 session 子树总 token | 否 |
+| `session_cost` | 当前 session 子树成本 | 是 |
+
+默认字段：
+
+```text
+repo | branch | git_diff_stats | quota_5h | quota_weekly | provider_balance
+```
+
+内置 footer 已经显示 context/cost/subagent 时，再启用重复字段会出现两份数字；这些字段仍保留为可选。
+
+`generation_metrics` 使用 v2 的 step 级 `streamed - created` 计算 provider-active 生成速度，不包含 TTFT。v2 没有可靠的 text part 首 token 时间，因此不再伪造 TTFT。
 
 ## 支持的 Providers
 
-`/usage` 和 quota statusline 字段当前支持以下 provider ID。匹配不区分大小写。
+| Provider / plan | Provider IDs | 凭据 |
+| --- | --- | --- |
+| Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY` / `ZAI_CODING_PLAN_API_KEY` 或 credential |
+| Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY` / `ZHIPU_CODING_PLAN_API_KEY` 或 credential |
+| Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY` / `KIMI_CODE_API_KEY` 或 credential |
+| MiniMax coding plan | `minimax`, `minimax-coding-plan` | `MINIMAX_CODING_PLAN_API_KEY` / `MINIMAX_API_KEY` 或 credential |
+| MiniMax CN | `minimax-cn`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` 或 credential |
+| Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | 模型调用用 API key；usage 需要 `XIAOMI_MIMO_SESSION_COOKIE` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` 或 credential |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` 或 credential |
+| OpenCode Go | `opencode-go`, `opencodego` | 优先内置 Console usage；回退 `OPENCODE_API_KEY` 或 credential |
+| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode credential store 中的 OAuth |
 
-| Provider / plan | Provider IDs | 凭据提示 | 有数据时显示 |
-| --- | --- | --- | --- |
-| Z.ai coding plan | `zai`, `zai-coding-plan` | `ZAI_API_KEY`, `ZAI_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota，time quota |
-| Zhipu coding plan | `zhipu`, `zhipuai`, `zhipu-coding-plan`, `zhipuai-coding-plan` | `ZHIPU_API_KEY`, `ZHIPU_CODING_PLAN_API_KEY` | 5h/daily/weekly token quota，time quota |
-| Kimi Code | `kimi`, `kimi-code`, `kimi-for-coding` | `KIMI_API_KEY`, `KIMI_CODE_API_KEY` | usage windows，包括存在时的 5h window |
-| MiniMax coding plan | `minimax`, `minimax-coding-plan` | `MINIMAX_CODING_PLAN_API_KEY`, `MINIMAX_API_KEY` | 国际站 5h 和 weekly token quota |
-| MiniMax CN coding plan | `minimax-cn`, `minimax-china-coding-plan`, `minimax-cn-coding-plan` | `MINIMAX_CHINA_CODING_PLAN_API_KEY` | 中国区 5h 和 weekly token quota |
-| Xiaomi MiMo Token Plan | `xiaomi-mimo`, `xiaomi`, `mimo`, `mimo-token-plan`, `xiaomi-token-plan*` | 模型调用用 `XIAOMI_TOKEN_PLAN_API_KEY` / `MIMO_API_KEY`；usage 需要 `XIAOMI_MIMO_SESSION_COOKIE` | plan/compensation/monthly credits quota，credits remaining |
-| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | account balance 和 availability |
-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | key label、remaining limit、total limit、usage totals |
-| OpenCode Go | `opencode-go`, `opencodego` | `OPENCODE_API_KEY` 或 OpenCode 已保存的 provider key | 5h、weekly、monthly subscription quota |
-| OpenAI / ChatGPT / Codex OAuth | `openai`, `codex`, `chatgpt` | OpenCode `auth.json` OAuth entry | ChatGPT plan、5h/weekly/monthly quota、code review quota、credits |
+凭据解析顺序：
 
-API key 类 provider 按以下顺序解析凭据：
+1. OpenCode V2 credential store（`context.client.credential.list()`）
+2. 环境变量
 
-1. 环境变量
-2. OpenCode `provider.<id>.options.apiKey`
-3. runtime provider key
-4. OpenCode `auth.json`
+不再读取 `auth.json`。
 
-OpenCode Go 通过 `GET https://opencode.ai/zen/go/v1/usage` 查询额度，并使用常规 Go API key 进行 Bearer 认证。通常可直接复用 OpenCode 配置或 `auth.json` 中的 `opencode-go` key，也可显式设置 `OPENCODE_API_KEY`；不再需要 workspace ID 或浏览器 cookie。
+OpenCode Zen (`opencode`) 的 Console limits 请使用内置 `/usage`。
 
-OpenAI/ChatGPT/Codex usage 使用 `auth.json` 中的 OAuth。`opencode` / OpenCode Zen 会被识别，但 OpenCode Zen 目前没有公开的 balance/quota API，因此 quota 字段会省略。
+Xiaomi MiMo 的 usage endpoint 在 SSO 后台下，拒绝 `tp-*` key；需要设置 `XIAOMI_MIMO_SESSION_COOKIE`。
 
-Xiaomi MiMo Token Plan 的 `tp-*` key 用于 OpenCode 模型调用；小米当前的 usage endpoint 在 SSO 后台下，拒绝 `tp-*` key。要让 `/usage` 和 statusline quota/balance 字段显示小米额度，需要从已登录的浏览器会话设置 `XIAOMI_MIMO_SESSION_COOKIE`，不要把 cookie 写入仓库。
+Endpoint 细节见 [doc/provider-query-methods.md](doc/provider-query-methods.md)。
 
-如果只有 `tp-*` key，没有 cookie，小米模型仍可被识别；上下文、session tokens、session cost、TTFT、git diff 等不依赖 provider usage API 的 statusline 字段仍可正常显示，但小米额度相关字段会省略或在 `/usage` 中提示 cookie 缺失。
+## 配置存储
 
-详细 endpoint 说明见 [doc/provider-query-methods.md](doc/provider-query-methods.md)。
-
-## 状态文件
-
-Statusline 字段选择保存到：
-
-```text
-${XDG_DATA_HOME:-~/.local/share}/opencode/statusline-plugin.json
-```
-
-可用环境变量覆盖：
-
-```text
-OPENCODE_STATUSLINE_CONFIG=/path/to/statusline-plugin.json
-```
-
-TUI 内切换模型后，插件会从 OpenCode 最近模型状态读取：
-
-```text
-${XDG_STATE_HOME:-~/.local/state}/opencode/model.json
-```
-
-可用环境变量覆盖 state 目录：
-
-```text
-OPENCODE_STATUSLINE_STATE_DIR=/path/to/opencode-state
-```
+字段选择通过 OpenCode V2 `context.storage.store` 保存，由 OpenCode 按插件 id 自动命名空间化。不再使用单独的 `statusline-plugin.json`，也不需要 `OPENCODE_STATUSLINE_CONFIG` / `OPENCODE_STATUSLINE_STATE_DIR`。
 
 ## 开发
-
-常用命令：
 
 ```sh
 npm run typecheck
@@ -227,31 +142,23 @@ npm test
 npm run build
 ```
 
-如果本地 `/tmp` 挂载点拒绝 Node/Vitest 写入，可以把 `TMPDIR` 指向项目内被忽略的临时目录：
-
-```sh
-mkdir -p .tmp
-TMPDIR=$PWD/.tmp npm test
-```
-
-OpenCode 从预编译的 `dist/tui.js` 解析 TUI entry，因此改源码后要先运行 `npm run build` 再在 TUI 中测试。
+`npm run build` 会先用 `tsc` 输出，再用 Babel + Solid preset 预编译 `dist/**/*.jsx`。OpenCode 从 `dist/tui.js` 加载 TUI 入口，所以修改源码后必须重新 build。
 
 源码结构：
 
 ```text
 src/
-  index.ts                 package server entry
-  plugin.ts                empty server shim
-  tui.tsx                  TUI slots, dialogs, slash commands, statusline rendering
+  tui.tsx                  V2 plugin entry, slot, keymap, storage
   lib/
-    auth.ts                env/config/auth.json credential lookup
-    opencode-client.ts     active model resolution helpers
+    statusline.ts          snapshot + field rendering
+    statusline-view.tsx    prompt.footer.status component
+    statusline-config.ts   field definitions / parsing / defaults
+    quota.ts               built-in Go usage + provider collector bridge
+    quota-dialog.tsx       /quota dialog
     providers.ts           provider usage collectors
-    statusline.ts          statusline field renderer
-    statusline-config.ts   persisted field selection
-    tui-usage.ts           /usage dialog text builder
-    usage-format.ts        usage report formatting
-    format.ts              shared formatting helpers
+    credentials.ts         V2 credential resolution
+    usage-format.ts        quota report formatting
+    format.ts              shared formatting
 ```
 
-架构细节见 [doc/plugin-architecture.md](doc/plugin-architecture.md)。
+架构见 [doc/plugin-architecture.md](doc/plugin-architecture.md)。

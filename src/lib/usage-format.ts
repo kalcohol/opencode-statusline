@@ -21,14 +21,14 @@ function formatWindow(window: UsageWindow): string {
 export function formatUsageReport(report: UsageReport | undefined): string {
   if (!report) {
     return [
-      "Usage unavailable",
+      "Provider quota unavailable",
       "",
-      "Could not resolve the current provider/model. Open a session, send one model request, or set config.model."
+      "Could not resolve the current provider/model. Open a session, send one model request, or select a model."
     ].join("\n");
   }
 
   const lines: string[] = [];
-  lines.push("OpenCode Usage");
+  lines.push("Provider quota");
   lines.push("");
   lines.push(`Provider: ${report.providerName ? `${report.providerName} (${report.providerID})` : report.providerID}`);
   if (report.modelID) lines.push(`Model: ${report.modelID}`);

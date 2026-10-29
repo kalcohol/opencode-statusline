@@ -1,12 +1,12 @@
-import fs from "node:fs";
 import { createHash } from "node:crypto";
 import {
-  getAuthJsonPath,
+  credentialFingerprint,
+  describeCredentialSource,
   resolveApiCredential,
   resolveOAuthCredential,
-  describeCredentialSource,
+  type CredentialSet,
   type CredentialSource
-} from "./auth.js";
+} from "./credentials.js";
 import {
   clampPercent,
   formatMoney,
@@ -58,9 +58,7 @@ export type UsageReport = {
 export type ProviderInfoLike = {
   id?: string;
   name?: string;
-  key?: string;
-  options?: Record<string, unknown>;
-  models?: Record<string, unknown>;
+  integrationID?: string;
 };
 
 type ProviderKind =
@@ -79,7 +77,7 @@ type ProviderKind =
 
 const USER_AGENT = "OpenCode-Statusline/0.1";
 const DEFAULT_TIMEOUT_MS = 12_000;
-const CACHE_TTL_MS = 60_000;
+const CACHE_TTL_MS = 30_000;
 const CACHE_STALE_TTL_MS = 10 * 60_000;
 const cache = new Map<string, { expiresAt: number; staleUntil: number; report: UsageReport }>();
 const inflight = new Map<string, Promise<UsageReport>>();
@@ -98,14 +96,13 @@ const CREDENTIAL_ENV_KEYS = [
   "OPENROUTER_API_KEY",
   "OPENCODE_API_KEY"
 ] as const;
-let authFileFingerprintCache: { statKey: string; value: string } | undefined;
 
 export type CollectProviderUsageInput = {
   providerID: string;
   providerName?: string;
   modelID?: string;
-  config?: unknown;
   providerInfo?: ProviderInfoLike;
+  credentials?: CredentialSet;
   force?: boolean;
 };
 
@@ -175,47 +172,11 @@ function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 20);
 }
 
-function serializeForFingerprint(value: unknown): string {
-  const seen = new WeakSet<object>();
-  try {
-    return JSON.stringify(value, (_key, item: unknown) => {
-      if (typeof item === "bigint") return `${item}n`;
-      if (typeof item === "function" || typeof item === "symbol") return String(item);
-      if (item && typeof item === "object") {
-        if (seen.has(item)) return "[Circular]";
-        seen.add(item);
-      }
-      return item;
-    }) ?? "";
-  } catch {
-    return Object.prototype.toString.call(value);
-  }
-}
-
-function authFileFingerprint(): string {
-  const file = getAuthJsonPath();
-  try {
-    const stat = fs.statSync(file);
-    const statKey = `${file}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
-    if (authFileFingerprintCache?.statKey === statKey) return authFileFingerprintCache.value;
-    const value = hashText(fs.readFileSync(file, "utf8"));
-    authFileFingerprintCache = { statKey, value };
-    return value;
-  } catch {
-    return `missing:${file}`;
-  }
-}
-
 function credentialScope(input: CollectProviderUsageInput): string {
-  const configProviders = isRecord(input.config) && isRecord(input.config.provider)
-    ? input.config.provider
-    : undefined;
   return hashText(JSON.stringify({
-    auth: authFileFingerprint(),
+    credentials: credentialFingerprint(input.credentials),
     env: CREDENTIAL_ENV_KEYS.map((key) => [key, process.env[key] ?? ""]),
-    config: serializeForFingerprint(configProviders),
-    providerKey: input.providerInfo?.key ?? "",
-    providerOptions: serializeForFingerprint(input.providerInfo?.options ?? {})
+    integrationID: input.providerInfo?.integrationID ?? ""
   }));
 }
 
@@ -224,6 +185,21 @@ function providerUsageCacheKey(input: CollectProviderUsageInput): string {
   const providerScope = kind === "unknown" ? input.providerID.toLowerCase() : "";
   const modelScope = kind === "minimax" || kind === "minimax-cn" ? input.modelID ?? "" : "";
   return `${kind}:${providerScope}:${modelScope}:${credentialScope(input)}`;
+}
+
+function resolveProviderApiCredential(
+  input: { credentials?: CredentialSet; providerInfo?: ProviderInfoLike },
+  env: readonly string[],
+  providerIDs: readonly string[],
+  authKeys: readonly string[] = []
+) {
+  return resolveApiCredential({
+    env,
+    credentials: input.credentials,
+    integrationIDs: [input.providerInfo?.integrationID, ...providerIDs, ...authKeys].filter(
+      (id): id is string => Boolean(id)
+    )
+  });
 }
 
 function reportForInput(report: UsageReport, input: CollectProviderUsageInput): UsageReport {
@@ -251,7 +227,6 @@ export function readCachedProviderUsage(
 export function clearProviderUsageCache(): void {
   cache.clear();
   inflight.clear();
-  authFileFingerprintCache = undefined;
 }
 
 function credentialMissing(providerID: string, providerName: string | undefined, modelID: string | undefined): UsageReport {
@@ -259,7 +234,7 @@ function credentialMissing(providerID: string, providerName: string | undefined,
     providerID,
     providerName,
     modelID,
-    error: "No usable credential found in env, opencode config, or auth.json"
+    error: "No usable credential found in the V2 credential store or environment"
   });
 }
 
@@ -411,24 +386,23 @@ async function queryZaiLike(input: {
   providerID: string;
   providerName?: string;
   modelID?: string;
-  config?: unknown;
+  credentials?: CredentialSet;
   providerInfo?: ProviderInfoLike;
   zhipu: boolean;
 }): Promise<UsageReport> {
   const providerIDs = input.zhipu
     ? ["zhipu", "zhipuai", "zhipu-coding-plan", "zhipuai-coding-plan"]
     : ["zai", "zai-coding-plan"];
-  const credential = resolveApiCredential({
-    env: input.zhipu
+  const credential = resolveProviderApiCredential(
+    input,
+    input.zhipu
       ? ["ZHIPU_API_KEY", "ZHIPU_CODING_PLAN_API_KEY"]
       : ["ZAI_API_KEY", "ZAI_CODING_PLAN_API_KEY", "ZHIPU_API_KEY"],
-    config: input.config,
     providerIDs,
-    authKeys: input.zhipu
+    input.zhipu
       ? ["zhipu-coding-plan", "zhipuai-coding-plan", "zhipuai"]
-      : ["zai-coding-plan", "zai"],
-    providerInfo: input.providerInfo
-  });
+      : ["zai-coding-plan", "zai"]
+  );
   if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
 
   const url = input.zhipu
@@ -445,7 +419,11 @@ async function queryZaiLike(input: {
     const report = baseReport({ ...input, auth: credential.source });
     report.plan = input.zhipu ? "Zhipu coding plan" : "Z.ai coding plan";
     const data = isRecord(payload) && isRecord(payload.data) ? payload.data : {};
-    const limits = Array.isArray(data.limits) ? data.limits : [];
+    const limits = Array.isArray(data.limits)
+      ? data.limits
+      : isRecord(payload) && Array.isArray(payload.limits)
+        ? payload.limits
+        : [];
     let tokenWindowCount = 0;
     for (const raw of limits) {
       if (!isRecord(raw)) continue;
@@ -488,20 +466,45 @@ async function queryZaiLike(input: {
   }
 }
 
+function kimiReset(value: Record<string, unknown>): { resetAtMs?: number; resetAfterMs?: number } {
+  const resetAtMs = resetAtFromDate(value.reset_at ?? value.resetAt ?? value.reset_time ?? value.resetTime);
+  if (resetAtMs !== undefined) return { resetAtMs };
+  for (const key of ["reset_in", "resetIn", "ttl"]) {
+    const seconds = toFiniteNumber(value[key]);
+    if (seconds !== undefined && seconds > 0) return { resetAfterMs: seconds * 1000 };
+  }
+  return {};
+}
+
+function kimiWindowKey(
+  duration: number | undefined,
+  unit: string,
+  name?: string
+): UsageWindowKey {
+  if ((duration === 5 && unit.includes("HOUR")) || /5\s*h/i.test(name ?? "")) return "fiveHour";
+  const minutes =
+    duration === undefined
+      ? undefined
+      : unit.includes("MINUTE")
+        ? duration
+        : unit.includes("HOUR")
+          ? duration * 60
+          : unit.includes("DAY")
+            ? duration * 24 * 60
+            : undefined;
+  if (minutes === 300) return "fiveHour";
+  if (minutes === 10_080) return "weekly";
+  return "other";
+}
+
 async function queryKimi(input: {
   providerID: string;
   providerName?: string;
   modelID?: string;
-  config?: unknown;
+  credentials?: CredentialSet;
   providerInfo?: ProviderInfoLike;
 }): Promise<UsageReport> {
-  const credential = resolveApiCredential({
-    env: ["KIMI_API_KEY", "KIMI_CODE_API_KEY"],
-    config: input.config,
-    providerIDs: ["kimi-for-coding", "kimi-code", "kimi"],
-    authKeys: ["kimi-for-coding", "kimi-code", "kimi"],
-    providerInfo: input.providerInfo
-  });
+  const credential = resolveProviderApiCredential(input, ["KIMI_API_KEY", "KIMI_CODE_API_KEY"], ["kimi-for-coding", "kimi-code", "kimi"], ["kimi-for-coding", "kimi-code", "kimi"]);
   if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
 
   try {
@@ -510,23 +513,33 @@ async function queryKimi(input: {
     });
     const report = baseReport({ ...input, auth: credential.source });
     report.plan = "Kimi Code";
-    const data = isRecord(payload) && isRecord(payload.data) ? payload.data : payload;
-    const usage = isRecord(data) && isRecord(data.usage) ? data.usage : undefined;
+    const root = isRecord(payload) ? payload : {};
+    const data = isRecord(root.data) ? root.data : root;
+    const usage = isRecord(data.usage) ? data.usage : isRecord(root.usage) ? root.usage : undefined;
     if (usage) {
       const limit = toFiniteNumber(usage.limit);
       const used = toFiniteNumber(usage.used)
         ?? (limit !== undefined && toFiniteNumber(usage.remaining) !== undefined
           ? limit - (toFiniteNumber(usage.remaining) ?? 0)
           : undefined);
+      const window = isRecord(usage.window) ? usage.window : {};
+      const duration = toFiniteNumber(window.duration);
+      const unit = String(window.timeUnit ?? "").toUpperCase();
+      const name = toNonEmptyString(usage.name);
+      const key = kimiWindowKey(duration, unit, name);
       report.windows.push(windowFromUsage({
-        key: "other",
-        label: toNonEmptyString(usage.name) ?? "Usage",
+        key: key === "other" ? "weekly" : key,
+        label: key === "fiveHour" ? "5h quota" : "Weekly quota",
         used,
         total: limit,
-        resetAtMs: resetAtFromDate(usage.reset_at ?? usage.resetAt ?? usage.reset_time ?? usage.resetTime)
+        ...kimiReset(usage)
       }));
     }
-    const limits = isRecord(data) && Array.isArray(data.limits) ? data.limits : [];
+    const limits = Array.isArray(data.limits)
+      ? data.limits
+      : Array.isArray(root.limits)
+        ? root.limits
+        : [];
     for (let index = 0; index < limits.length; index += 1) {
       const limit = limits[index];
       if (!isRecord(limit)) continue;
@@ -534,14 +547,19 @@ async function queryKimi(input: {
       const windowInfo = isRecord(limit.window) ? limit.window : {};
       const duration = toFiniteNumber(windowInfo.duration);
       const unit = String(windowInfo.timeUnit ?? "").toUpperCase();
-      const key: UsageWindowKey = duration === 5 && unit.includes("HOUR") ? "fiveHour" : "other";
-      const label = key === "fiveHour" ? "5h quota" : (toNonEmptyString(limit.name) ?? `Limit ${index + 1}`);
+      const labelText = toNonEmptyString(limit.name);
+      const key = kimiWindowKey(duration, unit, labelText);
+      const label = key === "fiveHour"
+        ? "5h quota"
+        : key === "weekly"
+          ? "Weekly quota"
+          : (labelText ?? `Limit ${index + 1}`);
       const total = toFiniteNumber(detail.limit);
       const used = toFiniteNumber(detail.used)
         ?? (total !== undefined && toFiniteNumber(detail.remaining) !== undefined
           ? total - (toFiniteNumber(detail.remaining) ?? 0)
           : undefined);
-      report.windows.push(windowFromUsage({ key, label, used, total, resetAtMs: resetAtFromDate(detail.reset_at ?? detail.resetAt) }));
+      report.windows.push(windowFromUsage({ key, label, used, total, ...kimiReset({ ...limit, ...detail }) }));
     }
     if (report.windows.length === 0) throw new Error("No usage data found in response");
     return report;
@@ -554,23 +572,22 @@ async function queryMiniMax(input: {
   providerID: string;
   providerName?: string;
   modelID?: string;
-  config?: unknown;
+  credentials?: CredentialSet;
   providerInfo?: ProviderInfoLike;
   china: boolean;
 }): Promise<UsageReport> {
-  const credential = resolveApiCredential({
-    env: input.china
+  const credential = resolveProviderApiCredential(
+    input,
+    input.china
       ? ["MINIMAX_CHINA_CODING_PLAN_API_KEY"]
       : ["MINIMAX_CODING_PLAN_API_KEY", "MINIMAX_API_KEY"],
-    config: input.config,
-    providerIDs: input.china
+    input.china
       ? ["minimax-china-coding-plan", "minimax-cn-coding-plan", "minimax-cn", "minimax-china"]
       : ["minimax-coding-plan", "minimax"],
-    authKeys: input.china
+    input.china
       ? ["minimax-china-coding-plan", "minimax-cn-coding-plan"]
-      : ["minimax-coding-plan", "minimax"],
-    providerInfo: input.providerInfo
-  });
+      : ["minimax-coding-plan", "minimax"]
+  );
   if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
 
   try {
@@ -585,9 +602,14 @@ async function queryMiniMax(input: {
     const status = toFiniteNumber(base.status_code);
     if (status !== undefined && status !== 0) throw new Error(toNonEmptyString(base.status_msg) ?? `status_code ${status}`);
     const remains = Array.isArray(payload.model_remains) ? payload.model_remains.filter(isRecord) : [];
+    const wanted = input.modelID?.trim().toLowerCase();
+    const name = (item: Record<string, unknown>) =>
+      (toNonEmptyString(item.model_name) ?? "").toLowerCase();
     const selected =
-      remains.find((item) => item.model_name === "MiniMax-M*")
-      ?? remains.find((item) => toNonEmptyString(item.model_name) === input.modelID)
+      remains.find((item) => name(item) === "minimax-m*")
+      ?? (wanted ? remains.find((item) => name(item) === wanted) : undefined)
+      ?? remains.find((item) => name(item).startsWith("minimax-m"))
+      ?? remains.find((item) => name(item) === "general" || name(item) === "video")
       ?? remains[0];
     if (!selected) throw new Error("No model quota rows found");
 
@@ -595,18 +617,42 @@ async function queryMiniMax(input: {
     report.plan = input.china ? "MiniMax coding plan (China)" : "MiniMax coding plan";
     const modelName = toNonEmptyString(selected.model_name);
     if (modelName) report.items.push({ label: "Quota model", value: modelName });
+    const intervalTotal = toFiniteNumber(selected.current_interval_total_count);
+    const intervalRaw = toFiniteNumber(selected.current_interval_usage_count);
+    const intervalUsed =
+      intervalRaw === undefined
+        ? undefined
+        : intervalTotal !== undefined
+          ? input.china
+            ? Math.max(0, Math.min(intervalTotal, intervalRaw))
+            : Math.max(0, intervalTotal - Math.min(intervalTotal, intervalRaw))
+          : input.china
+            ? intervalRaw
+            : undefined;
+    const weeklyTotal = toFiniteNumber(selected.current_weekly_total_count);
+    const weeklyRaw = toFiniteNumber(selected.current_weekly_usage_count);
+    const weeklyUsed =
+      weeklyRaw === undefined
+        ? undefined
+        : weeklyTotal !== undefined
+          ? input.china
+            ? Math.max(0, Math.min(weeklyTotal, weeklyRaw))
+            : Math.max(0, weeklyTotal - Math.min(weeklyTotal, weeklyRaw))
+          : input.china
+            ? weeklyRaw
+            : undefined;
     report.windows.push(windowFromUsage({
       key: "fiveHour",
       label: "5h quota",
-      used: selected.current_interval_usage_count,
-      total: selected.current_interval_total_count,
+      used: intervalUsed,
+      total: intervalTotal,
       resetAfterMs: selected.remains_time
     }));
     report.windows.push(windowFromUsage({
       key: "weekly",
       label: "Weekly quota",
-      used: selected.current_weekly_usage_count,
-      total: selected.current_weekly_total_count,
+      used: weeklyUsed,
+      total: weeklyTotal,
       resetAfterMs: selected.weekly_remains_time
     }));
     return report;
@@ -701,16 +747,10 @@ async function queryDeepSeek(input: {
   providerID: string;
   providerName?: string;
   modelID?: string;
-  config?: unknown;
+  credentials?: CredentialSet;
   providerInfo?: ProviderInfoLike;
 }): Promise<UsageReport> {
-  const credential = resolveApiCredential({
-    env: ["DEEPSEEK_API_KEY"],
-    config: input.config,
-    providerIDs: ["deepseek"],
-    authKeys: ["deepseek"],
-    providerInfo: input.providerInfo
-  });
+  const credential = resolveProviderApiCredential(input, ["DEEPSEEK_API_KEY"], ["deepseek"], ["deepseek"]);
   if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
 
   try {
@@ -744,16 +784,10 @@ async function queryOpenRouter(input: {
   providerID: string;
   providerName?: string;
   modelID?: string;
-  config?: unknown;
+  credentials?: CredentialSet;
   providerInfo?: ProviderInfoLike;
 }): Promise<UsageReport> {
-  const credential = resolveApiCredential({
-    env: ["OPENROUTER_API_KEY"],
-    config: input.config,
-    providerIDs: ["openrouter"],
-    authKeys: ["openrouter"],
-    providerInfo: input.providerInfo
-  });
+  const credential = resolveProviderApiCredential(input, ["OPENROUTER_API_KEY"], ["openrouter"], ["openrouter"]);
   if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
 
   try {
@@ -795,22 +829,22 @@ async function queryOpenCodeGo(input: {
   providerID: string;
   providerName?: string;
   modelID?: string;
-  config?: unknown;
+  credentials?: CredentialSet;
   providerInfo?: ProviderInfoLike;
 }): Promise<UsageReport> {
-  const credential = resolveApiCredential({
-    env: ["OPENCODE_API_KEY"],
-    config: input.config,
-    providerIDs: ["opencode-go", "opencodego"],
-    authKeys: ["opencode-go", "opencodego"],
-    providerInfo: input.providerInfo
-  });
+  const credential = resolveProviderApiCredential(
+    input,
+    ["OPENCODE_API_KEY"],
+    ["opencode-go", "opencodego"],
+    ["opencode", "opencode-go", "opencodego"]
+  );
   if (!credential) return credentialMissing(input.providerID, input.providerName, input.modelID);
 
   try {
     const payload = await fetchJson("https://opencode.ai/zen/go/v1/usage", {
       headers: {
         Authorization: `Bearer ${credential.token}`,
+        ...(credential.orgID ? { "x-opencode-org-id": credential.orgID } : {}),
         "User-Agent": USER_AGENT
       }
     });
@@ -844,16 +878,23 @@ async function queryOpenAI(input: {
   providerID: string;
   providerName?: string;
   modelID?: string;
+  credentials?: CredentialSet;
+  providerInfo?: ProviderInfoLike;
 }): Promise<UsageReport> {
-  const credential = resolveOAuthCredential(["openai", "codex", "chatgpt", "opencode"]);
+  const integrationID = input.providerInfo?.integrationID;
+  const allowedIntegrationIDs = ["openai", "codex", "chatgpt"];
+  const credential = resolveOAuthCredential({
+    credentials: input.credentials,
+    integrationIDs: [
+      ...(integrationID && allowedIntegrationIDs.includes(integrationID) ? [integrationID] : []),
+      ...allowedIntegrationIDs
+    ]
+  });
   if (!credential) {
     return errorReport({
       ...input,
-      error: "No OpenAI OAuth entry found in auth.json"
+      error: "No OpenAI OAuth credential found"
     });
-  }
-  if (credential.expires && credential.expires < Date.now()) {
-    return errorReport({ ...input, auth: credential.source, error: "OpenAI OAuth token is expired" });
   }
   try {
     const headers: Record<string, string> = {
@@ -971,15 +1012,22 @@ export async function collectProviderUsage(input: CollectProviderUsageInput): Pr
         report = await queryOpenAI(input);
         break;
       case "opencode-zen":
-        report = errorReport({ ...input, error: "OpenCode Zen does not expose a public balance/quota API" });
+        report = errorReport({ ...input, error: "OpenCode Console usage is available from the built-in /usage command" });
         break;
       default:
         report = errorReport({ ...input, error: `Provider '${input.providerID}' has no supported usage collector` });
         break;
     }
 
-    const now = Date.now();
-    cache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, staleUntil: now + CACHE_STALE_TTL_MS, report });
+    if (report.ok) {
+      const now = Date.now();
+      if (cache.size > 100) {
+        for (const [key, entry] of cache) {
+          if (entry.staleUntil <= now) cache.delete(key);
+        }
+      }
+      cache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, staleUntil: now + CACHE_STALE_TTL_MS, report });
+    }
     return report;
   })();
 
