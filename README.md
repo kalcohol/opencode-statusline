@@ -77,13 +77,13 @@ ${XDG_CONFIG_HOME:-~/.config}/opencode/cli.json
 | --- | --- | --- |
 | `repo` | 仓库/目录 basename | sidebar 有路径 |
 | `branch` | 当前 git 分支 | sidebar 有 `path:branch` |
-| `git_diff_stats` | working tree 增删行数 `+12,-3` | 无紧凑 totals |
+| `git_diff_stats` | working tree 增删行数 `+12,-3`；仅 VCS repo 显示 | 无紧凑 totals |
 | `context_used` | 当前上下文 token | 是 |
 | `context_remaining` | 上下文剩余 | 否 |
 | `context_length` | 上下文上限 | 否 |
 | `context_window` | 已用/总上下文 | 是（tokens + %） |
 | `generation_metrics` | 当前 turn 的生成速度 `gen 42 tok/s` | 否 |
-| `subagent_status` | running subagent 数量 | 是 |
+| `subagent_status` | running subagent 数量；完成后短暂显示 `sub N done`，有数据时带速度 | 是（仅 running 数量） |
 | `agent_status` | 主 session 是否 running | 是（spinner） |
 | `quota_5h` | provider 5h quota 使用百分比 | 仅 Console/Go |
 | `quota_weekly` | provider weekly quota 使用百分比 | 仅 Console/Go |
@@ -155,7 +155,8 @@ src/
     statusline-config.ts   field definitions / parsing / defaults
     quota.ts               built-in Go usage + provider collector bridge
     quota-dialog.tsx       /quota dialog
-    providers.ts           provider usage collectors
+    providers.ts           provider barrel
+    providers/             adapter registry + provider collectors
     credentials.ts         V2 credential resolution
     usage-format.ts        quota report formatting
     format.ts              shared formatting

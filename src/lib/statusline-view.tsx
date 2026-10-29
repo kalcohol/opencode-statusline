@@ -5,6 +5,8 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 import type { UsageReport } from "./providers.js";
 import {
   buildStatuslineSnapshot,
+  generationMetricsAfter,
+  hasVcsProvider,
   renderStatuslineParts,
   sessionSubtree,
   statuslineRepoName,
@@ -86,6 +88,11 @@ export function Statusline(props: {
   const [gitDiff, setGitDiff] = createSignal<KeyedValue<GitDiffStats>>();
   const [quotaReport, setQuotaReport] = createSignal<KeyedValue<UsageReport>>();
   const [refreshTick, setRefreshTick] = createSignal(0);
+  const [subagentDone, setSubagentDone] = createSignal<{ count: number; speed?: number }>({ count: 0 });
+  let subagentDoneTimer: ReturnType<typeof setTimeout> | undefined;
+  let subagentDoneVersion = 0;
+  const executionStarts = new Map<string, string | undefined>();
+  const doneSessions = new Set<string>();
 
   const session = createMemo(() => props.context.data.session.get(props.sessionID));
   const messages = createMemo(() => props.context.data.session.message.list(props.sessionID));
@@ -93,6 +100,8 @@ export function Statusline(props: {
     () => session()?.location ?? props.context.location ?? props.context.data.location.default()
   );
   const locationKey = createMemo(() => location()?.directory ?? "");
+  const vcs = createMemo(() => props.context.data.location.vcs.info(location()));
+  const hasVcs = createMemo(() => hasVcsProvider(vcs()));
   const models = createMemo(() => props.context.data.location.model.list(location()));
   const providers = createMemo(() => props.context.data.location.provider.list(location()) ?? []);
   const model = createMemo(() => currentModel(props.context, session()));
@@ -119,6 +128,7 @@ export function Statusline(props: {
       ).length || undefined
   );
   const wantDiff = createMemo(() => props.fields.includes("git_diff_stats"));
+  const wantVcs = createMemo(() => wantDiff() || props.fields.includes("branch"));
   const wantQuota = createMemo(() => props.fields.some((field) => QUOTA_FIELDS.includes(field)));
   const visibleGitDiff = createMemo(() => {
     const value = gitDiff();
@@ -133,11 +143,18 @@ export function Statusline(props: {
   let quotaVersion = 0;
 
   createEffect(() => {
+    if (!wantVcs()) return;
+    const target = location();
+    if (!target) return;
+    void props.context.data.location.vcs.sync(target).catch(() => undefined);
+  });
+
+  createEffect(() => {
     const enabled = wantDiff();
     const target = location();
     const key = locationKey();
     refreshTick();
-    if (!enabled || !target) {
+    if (!enabled || !target || !hasVcs()) {
       diffVersion += 1;
       setGitDiff(undefined);
       return;
@@ -180,11 +197,80 @@ export function Statusline(props: {
       });
   });
 
+  let activeSessionID = props.sessionID;
+  createEffect(() => {
+    const sessionID = props.sessionID;
+    if (sessionID === activeSessionID) return;
+    activeSessionID = sessionID;
+    subagentDoneVersion += 1;
+    executionStarts.clear();
+    doneSessions.clear();
+    if (subagentDoneTimer) clearTimeout(subagentDoneTimer);
+    subagentDoneTimer = undefined;
+    setSubagentDone({ count: 0 });
+  });
+
+  const isSubtreeSession = (sessionID: string) =>
+    sessionID !== props.sessionID && sessions().some((item) => item.id === sessionID);
+
   const onExecution = (event: { data: { sessionID: string } }) => {
     const sessionID = event.data.sessionID;
-    if (sessionID === props.sessionID || sessions().some((item) => item.id === sessionID)) {
+    if (sessionID === props.sessionID || isSubtreeSession(sessionID)) {
       setRefreshTick((value) => value + 1);
     }
+  };
+  const onExecutionStarted = (event: { data: { sessionID: string } }) => {
+    const sessionID = event.data.sessionID;
+    if (!isSubtreeSession(sessionID)) return;
+    const messages = props.context.data.session.message.list(sessionID);
+    executionStarts.set(sessionID, messages.at(-1)?.id);
+    doneSessions.delete(sessionID);
+    subagentDoneVersion += 1;
+  };
+  const onSubagentDone = (event: { data: { sessionID: string } }) => {
+    const sessionID = event.data.sessionID;
+    if (!isSubtreeSession(sessionID)) return;
+    if (doneSessions.has(sessionID)) return;
+    doneSessions.add(sessionID);
+
+    const afterID = executionStarts.get(sessionID);
+    executionStarts.delete(sessionID);
+
+    setSubagentDone((previous) => ({ count: previous.count + 1, speed: undefined }));
+    if (subagentDoneTimer) clearTimeout(subagentDoneTimer);
+    subagentDoneTimer = setTimeout(() => {
+      doneSessions.clear();
+      setSubagentDone({ count: 0 });
+    }, 8_000);
+
+    if (afterID === undefined) return;
+    const version = ++subagentDoneVersion;
+    const speed = () =>
+      generationMetricsAfter(props.context.data.session.message.list(sessionID), afterID)
+        ?.tokensPerSecond;
+    const immediate = speed();
+    if (immediate !== undefined) {
+      setSubagentDone((previous) => ({ ...previous, speed: immediate }));
+      return;
+    }
+    void props.context.data.session.message
+      .sync(sessionID)
+      .then(() => {
+        if (version !== subagentDoneVersion) return;
+        const synced = speed();
+        if (synced !== undefined) {
+          setSubagentDone((previous) => ({ ...previous, speed: synced }));
+        }
+      })
+      .catch(() => undefined);
+  };
+  const onSucceeded = (event: { data: { sessionID: string } }) => {
+    onExecution(event);
+    onSubagentDone(event);
+  };
+  const onFailed = (event: { data: { sessionID: string } }) => {
+    executionStarts.delete(event.data.sessionID);
+    onExecution(event);
   };
   const onCredential = () => {
     quotaVersion += 1;
@@ -192,9 +278,10 @@ export function Statusline(props: {
     setRefreshTick((value) => value + 1);
   };
   const unsubscribers = [
-    props.context.data.on("session.execution.succeeded", onExecution),
-    props.context.data.on("session.execution.failed", onExecution),
-    props.context.data.on("session.execution.interrupted", onExecution),
+    props.context.data.on("session.execution.started", onExecutionStarted),
+    props.context.data.on("session.execution.succeeded", onSucceeded),
+    props.context.data.on("session.execution.failed", onFailed),
+    props.context.data.on("session.execution.interrupted", onFailed),
     props.context.data.on("credential.updated", onCredential),
     props.context.data.on("credential.switched", onCredential)
   ];
@@ -204,6 +291,10 @@ export function Statusline(props: {
   onCleanup(() => {
     diffVersion += 1;
     quotaVersion += 1;
+    subagentDoneVersion += 1;
+    executionStarts.clear();
+    doneSessions.clear();
+    if (subagentDoneTimer) clearTimeout(subagentDoneTimer);
     clearInterval(refreshInterval);
     for (const unsubscribe of unsubscribers) unsubscribe();
   });
@@ -216,9 +307,11 @@ export function Statusline(props: {
         sessions: sessions(),
         session: session(),
         repo: statuslineRepoName(session(), location()?.directory),
-        branch: props.context.data.location.vcs.info(location())?.branch.current,
+        branch: vcs()?.branch.current,
         gitDiff: visibleGitDiff(),
         subagentCount: subagentCount(),
+        subagentDoneCount: subagentDone().count || undefined,
+        subagentDoneSpeed: subagentDone().speed,
         agentStatus: props.context.data.session.status(props.sessionID),
         quotaReport: visibleQuotaReport()
       }),

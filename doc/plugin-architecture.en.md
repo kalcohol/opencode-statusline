@@ -22,7 +22,8 @@ src/
     statusline-config.ts   field definitions, defaults, argument parsing
     quota.ts               built-in Go usage + provider collector bridge
     quota-dialog.tsx       /quota dialog
-    providers.ts           provider usage collectors
+    providers.ts           provider barrel
+    providers/             adapter registry + provider collectors
     credentials.ts         V2 credential store + env fallback
     usage-format.ts        quota report formatting
     format.ts              shared formatting
@@ -148,7 +149,9 @@ V2 `streamed` is the provider response body end, not first-token time, so the pl
 
 ## Provider layer
 
-`providers.ts` normalizes each provider response into `UsageReport`:
+`providers.ts` is only a barrel. Each provider lives in `providers/` as an adapter, and `registry.ts` selects one through a static exact-alias Map. The registry centrally owns integration fail-closed checks, credential resolution, cache keys, TTL/stale/inflight; adapters only fetch and parse.
+
+Every adapter normalizes into `UsageReport`:
 
 ```ts
 {

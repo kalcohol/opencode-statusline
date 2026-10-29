@@ -233,6 +233,20 @@ describe("provider collection", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("shares the cache across aliases of the same provider adapter", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ plan_type: "plus", credits: { balance: "2.00" } })
+    );
+    const credentials = [oauthCredential("openai", "a.b.c")];
+
+    const first = await collectProviderUsage({ providerID: "openai", credentials, force: true });
+    const second = await collectProviderUsage({ providerID: "codex", credentials });
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not send an OpenCode Console OAuth token to the ChatGPT endpoint", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
     const report = await collectProviderUsage({
@@ -447,6 +461,101 @@ describe("provider collection", () => {
 
     expect(report.ok).toBe(true);
     expect(findUsageWindow(report, "fiveHour")?.usedPercent).toBe(70);
+  });
+
+  it("keeps the original Kimi credential priority", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ usage: { limit: 100, used: 10 } })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "kimi",
+      credentials: [
+        keyCredential("kimi", "plain-key"),
+        keyCredential("kimi-for-coding", "coding-key"),
+        keyCredential("kimi-code", "code-key")
+      ],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer coding-key"
+    );
+  });
+
+  it("keeps the original MiniMax CN credential priority", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        base_resp: { status_code: 0 },
+        model_remains: [
+          {
+            model_name: "MiniMax-M*",
+            current_interval_usage_count: 10,
+            current_interval_total_count: 100,
+            remains_time: 18000
+          }
+        ]
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "minimax-cn",
+      credentials: [
+        keyCredential("minimax-cn", "bare-key"),
+        keyCredential("minimax-china-coding-plan", "plan-key")
+      ],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer plan-key"
+    );
+  });
+
+  it("prefers the coding-plan credential for international MiniMax", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        base_resp: { status_code: 0 },
+        model_remains: [
+          {
+            model_name: "MiniMax-M*",
+            current_interval_usage_count: 10,
+            current_interval_total_count: 100,
+            remains_time: 18000
+          }
+        ]
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "minimax",
+      credentials: [
+        keyCredential("minimax", "bare-key"),
+        keyCredential("minimax-coding-plan", "plan-key")
+      ],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer plan-key"
+    );
+  });
+
+  it("fails closed for a Xiaomi provider bound to an unknown integration", async () => {
+    process.env.XIAOMI_MIMO_SESSION_COOKIE = "cookie";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
+
+    const report = await collectProviderUsage({
+      providerID: "xiaomi-mimo",
+      providerInfo: { id: "xiaomi-mimo", integrationID: "custom-xiaomi" },
+      force: true
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(report.ok).toBe(false);
   });
 
   it("uses the international endpoint for the generic MiniMax provider", async () => {

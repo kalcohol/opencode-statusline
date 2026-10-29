@@ -73,13 +73,13 @@ OpenCode を再起動してください。TUI-only パッケージなので `ope
 | --- | --- | --- |
 | `repo` | リポジトリ/ディレクトリ名 | sidebar にパス |
 | `branch` | 現在の git branch | sidebar に `path:branch` |
-| `git_diff_stats` | working tree の増減 `+12,-3` | コンパクトな合計なし |
+| `git_diff_stats` | working tree の増減 `+12,-3`；VCS repo のみ表示 | コンパクトな合計なし |
 | `context_used` | 現在のコンテキスト token | あり |
 | `context_remaining` | 残りコンテキスト | なし |
 | `context_length` | コンテキスト上限 | なし |
 | `context_window` | 使用/上限 | あり |
 | `generation_metrics` | 現在 turn の生成速度 `gen 42 tok/s` | なし |
-| `subagent_status` | 実行中 subagent 数 | あり |
+| `subagent_status` | 実行中 subagent 数；完了後は `sub N done` を短時間表示（速度があれば併記） | 実行中の数のみ |
 | `agent_status` | メイン session の実行状態 | あり（spinner） |
 | `quota_5h` | provider 5h quota 使用率 | Console/Go のみ |
 | `quota_weekly` | provider weekly quota 使用率 | Console/Go のみ |

@@ -22,7 +22,8 @@ src/
     statusline-config.ts   field definitions, defaults, argument parsing
     quota.ts               built-in Go usage + provider collector bridge
     quota-dialog.tsx       /quota dialog
-    providers.ts           provider usage collectors
+    providers.ts           provider barrel
+    providers/             adapter registry + provider collectors
     credentials.ts         V2 credential store + env fallback
     usage-format.ts        quota report formatting
     format.ts              shared formatting
@@ -148,7 +149,9 @@ V2 的 `streamed` 是 provider 响应体结束时间，不是首 token 时间，
 
 ## Provider 层
 
-`providers.ts` 将各 provider 的响应规范化为 `UsageReport`：
+`providers.ts` 只是 barrel；`providers/` 下每个 provider 是一个 adapter，`registry.ts` 用静态精确 alias Map 选择 adapter。Registry 集中负责 integration fail-closed、credential 解析、cache key、TTL/stale/inflight；adapter 只负责请求和响应解析。
+
+所有 adapter 都规范化为 `UsageReport`：
 
 ```ts
 {

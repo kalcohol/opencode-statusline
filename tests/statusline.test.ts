@@ -4,6 +4,8 @@ import type { UsageReport } from "../src/lib/providers.js";
 import {
   buildStatuslineSnapshot,
   generationMetrics,
+  generationMetricsAfter,
+  hasVcsProvider,
   providerBalanceText,
   renderStatuslineParts,
   sessionSubtree
@@ -144,6 +146,19 @@ describe("statusline snapshot rendering", () => {
     ]);
   });
 
+  it("keeps the zero diff value for a clean repository", () => {
+    const snapshot = buildStatuslineSnapshot({
+      messages: [],
+      models: [],
+      sessions: [session({ id: "root" })],
+      gitDiff: { added: 0, removed: 0 }
+    });
+
+    expect(renderStatuslineParts(snapshot, ["git_diff_stats"])).toEqual([
+      { field: "git_diff_stats", text: "+0,-0" }
+    ]);
+  });
+
   it("keeps child subtree totals separate from siblings", () => {
     const root = session({ id: "root" });
     const first = session({ id: "first", parentID: "root", tokens: tokens(10, 1) });
@@ -186,6 +201,21 @@ describe("statusline snapshot rendering", () => {
     });
 
     expect(generationMetrics([user, first, second])?.tokensPerSecond).toBeCloseTo(277.78, 1);
+  });
+
+  it("computes generation speed only after an explicit execution boundary", () => {
+    const user = (id: string, created: number) =>
+      ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
+    const messages = [
+      user("old-user", 100),
+      assistant({ id: "old-assistant", created: 200, streamed: 1200, completed: 1300, tokens: tokens(100, 100, 0) }),
+      user("boundary", 2000),
+      user("new-user", 2100),
+      assistant({ id: "new-assistant", created: 2200, streamed: 4200, completed: 4300, tokens: tokens(100, 800, 0) })
+    ];
+
+    expect(generationMetricsAfter(messages, "boundary")?.tokensPerSecond).toBe(400);
+    expect(generationMetricsAfter(messages, "missing")).toBeUndefined();
   });
 
   it("only aggregates the current turn when idle markers trail the history", () => {
@@ -263,6 +293,40 @@ describe("statusline snapshot rendering", () => {
 
     expect(snapshot.contextUsed).toBe(1100);
     expect(snapshot.contextLimit).toBeUndefined();
+  });
+
+  it("shows a transient subagent completion badge with speed", () => {
+    const snapshot = buildStatuslineSnapshot({
+      messages: [],
+      models: [],
+      sessions: [session({ id: "root" })],
+      subagentDoneCount: 1,
+      subagentDoneSpeed: 42
+    });
+
+    expect(renderStatuslineParts(snapshot, ["subagent_status"])).toEqual([
+      { field: "subagent_status", text: "sub 1 done · 42 tok/s" }
+    ]);
+  });
+
+  it("combines running and completed subagents", () => {
+    const snapshot = buildStatuslineSnapshot({
+      messages: [],
+      models: [],
+      sessions: [session({ id: "root" })],
+      subagentCount: 2,
+      subagentDoneCount: 1
+    });
+
+    expect(renderStatuslineParts(snapshot, ["subagent_status"])).toEqual([
+      { field: "subagent_status", text: "sub 2 running · 1 done" }
+    ]);
+  });
+
+  it("detects a VCS repository by provider presence", () => {
+    expect(hasVcsProvider({ provider: "git" })).toBe(true);
+    expect(hasVcsProvider({})).toBe(false);
+    expect(hasVcsProvider(undefined)).toBe(false);
   });
 
   it("prefers remaining balance rows", () => {

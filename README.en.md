@@ -73,13 +73,13 @@ Show the current provider's quota/balance. OpenCode Go has two paths: a provider
 | --- | --- | --- |
 | `repo` | Repository/directory basename | sidebar shows path |
 | `branch` | Current git branch | sidebar shows `path:branch` |
-| `git_diff_stats` | Working tree additions/deletions `+12,-3` | no compact totals |
+| `git_diff_stats` | Working tree additions/deletions `+12,-3`; shown only in a VCS repo | no compact totals |
 | `context_used` | Current context tokens | yes |
 | `context_remaining` | Remaining context | no |
 | `context_length` | Context limit | no |
 | `context_window` | Used/total context | yes |
 | `generation_metrics` | Current turn generation speed `gen 42 tok/s` | no |
-| `subagent_status` | Running subagent count | yes |
+| `subagent_status` | Running subagent count; briefly shows `sub N done` with speed when available | running count only |
 | `agent_status` | Main session running state | yes (spinner) |
 | `quota_5h` | Provider 5h quota percent | Console/Go only |
 | `quota_weekly` | Provider weekly quota percent | Console/Go only |

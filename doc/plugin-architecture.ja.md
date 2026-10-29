@@ -22,7 +22,8 @@ src/
     statusline-config.ts   field definitions, defaults, argument parsing
     quota.ts               built-in Go usage + provider collector bridge
     quota-dialog.tsx       /quota dialog
-    providers.ts           provider usage collectors
+    providers.ts           provider barrel
+    providers/             adapter registry + provider collectors
     credentials.ts         V2 credential store + env fallback
     usage-format.ts        quota report formatting
     format.ts              shared formatting
@@ -148,7 +149,9 @@ V2 の `streamed` は provider response body の終了時刻であり、初回 t
 
 ## Provider 層
 
-`providers.ts` は各 provider の response を `UsageReport` に正規化します。
+`providers.ts` は barrel です。各 provider は `providers/` の adapter として実装し、`registry.ts` が静的な exact alias Map で選択します。integration の fail-closed、credential 解決、cache key、TTL/stale/inflight は registry が集中管理し、adapter は取得と解析だけを担当します。
+
+すべての adapter は `UsageReport` に正規化します。
 
 ```ts
 {

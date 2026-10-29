@@ -35,6 +35,8 @@ export type StatuslineSnapshot = {
   contextLimit?: number;
   generation?: GenerationMetrics;
   subagentCount?: number;
+  subagentDoneCount?: number;
+  subagentDoneSpeed?: number;
   agentStatus?: string;
   quotaReport?: UsageReport;
   sessionTokens: TokenTotals;
@@ -200,6 +202,15 @@ export function generationMetrics(
   return { tokensPerSecond: generatedTokens / (generationMs / 1000) };
 }
 
+export function generationMetricsAfter(
+  messages: readonly SessionMessageInfo[],
+  afterID: string
+): GenerationMetrics | undefined {
+  const index = messages.findIndex((message) => message.id === afterID);
+  if (index === -1) return undefined;
+  return generationMetrics(messages.slice(index + 1));
+}
+
 export function buildStatuslineSnapshot(input: {
   messages: readonly SessionMessageInfo[];
   models: readonly ModelInfo[] | undefined;
@@ -209,6 +220,8 @@ export function buildStatuslineSnapshot(input: {
   branch?: string;
   gitDiff?: GitDiffStats;
   subagentCount?: number;
+  subagentDoneCount?: number;
+  subagentDoneSpeed?: number;
   agentStatus?: string;
   quotaReport?: UsageReport;
 }): StatuslineSnapshot {
@@ -221,6 +234,8 @@ export function buildStatuslineSnapshot(input: {
     contextLimit: usage?.limit,
     generation: generationMetrics(input.messages, input.session?.revert?.messageID),
     subagentCount: input.subagentCount,
+    subagentDoneCount: input.subagentDoneCount,
+    subagentDoneSpeed: input.subagentDoneSpeed,
     agentStatus: input.agentStatus,
     quotaReport: input.quotaReport,
     sessionTokens: sessionTokenTotals(input.sessions),
@@ -237,6 +252,20 @@ function formatTokensPerSecond(value: number): string {
 function generationMetricsText(metrics: GenerationMetrics | undefined): string | undefined {
   if (metrics?.tokensPerSecond === undefined) return undefined;
   return `gen ${formatTokensPerSecond(metrics.tokensPerSecond)} tok/s`;
+}
+
+function subagentStatusText(snapshot: StatuslineSnapshot): string | undefined {
+  const running = snapshot.subagentCount ?? 0;
+  const done = snapshot.subagentDoneCount ?? 0;
+  if (!running && !done) return undefined;
+  const parts: string[] = [];
+  if (running) parts.push(`sub ${running} running`);
+  if (done) parts.push(`${running ? "" : "sub "}${done} done`);
+  const text = parts.join(" · ");
+  if (done && snapshot.subagentDoneSpeed !== undefined) {
+    return `${text} · ${formatTokensPerSecond(snapshot.subagentDoneSpeed)} tok/s`;
+  }
+  return text;
 }
 
 function quotaText(window: ReturnType<typeof findUsageWindow>, label: string): string | undefined {
@@ -302,7 +331,7 @@ function fieldText(field: StatuslineFieldID, snapshot: StatuslineSnapshot): stri
     case "generation_metrics":
       return generationMetricsText(snapshot.generation);
     case "subagent_status":
-      return snapshot.subagentCount ? `sub ${snapshot.subagentCount} running` : undefined;
+      return subagentStatusText(snapshot);
     case "agent_status":
       return snapshot.agentStatus === "running" ? "running" : undefined;
     case "quota_5h":
@@ -336,4 +365,8 @@ export function renderStatuslineParts(
 
 export function statuslineRepoName(session: SessionInfo | undefined, fallback: string | undefined): string | undefined {
   return basename(session?.location.directory ?? fallback);
+}
+
+export function hasVcsProvider(info: { provider?: string } | undefined): boolean {
+  return Boolean(info?.provider);
 }
