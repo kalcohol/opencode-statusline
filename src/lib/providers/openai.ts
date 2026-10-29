@@ -1,4 +1,4 @@
-import { isRecord, toFiniteNumber, toNonEmptyString } from "../format.js";
+import { formatMoney, isRecord, toFiniteNumber, toNonEmptyString } from "../format.js";
 import {
   baseReport,
   errorReport,
@@ -123,7 +123,10 @@ async function collectOpenAI(input: AdapterInput): Promise<UsageReport> {
     const credits = isRecord(payload.credits) ? payload.credits : undefined;
     if (credits) {
       if (credits.unlimited === true) report.balances.push({ label: "Credits", value: "unlimited" });
-      else if (toNonEmptyString(credits.balance)) report.balances.push({ label: "Credits", value: `$${credits.balance}` });
+      else {
+        const balance = formatMoney(credits.balance);
+        if (balance) report.balances.push({ label: "Credits", value: balance });
+      }
       if (typeof credits.has_credits === "boolean") report.items.push({ label: "Has credits", value: String(credits.has_credits) });
     }
     if (report.windows.length === 0 && report.balances.length === 0) throw new Error("No usage data found in response");

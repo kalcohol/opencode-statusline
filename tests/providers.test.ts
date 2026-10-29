@@ -247,6 +247,24 @@ describe("provider collection", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("rounds OpenAI credit balances", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        plan_type: "plus",
+        credits: { balance: "12.345678" }
+      })
+    );
+
+    const report = await collectProviderUsage({
+      providerID: "openai",
+      credentials: [oauthCredential("openai", "a.b.c")],
+      force: true
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.balances[0]).toEqual({ label: "Credits", value: "$12.35" });
+  });
+
   it("does not send an OpenCode Console OAuth token to the ChatGPT endpoint", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
     const report = await collectProviderUsage({

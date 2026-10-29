@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatLocalDateTime, formatReset, formatTokenAmount } from "../src/lib/format.js";
+import { formatLocalDateTime, formatQuantity, formatReset, formatTokenAmount } from "../src/lib/format.js";
 
 describe("formatTokenAmount", () => {
   it("keeps values below 1024 in base units", () => {
@@ -9,6 +9,14 @@ describe("formatTokenAmount", () => {
   it("promotes by 1024", () => {
     expect(formatTokenAmount(1536)).toBe("1.5K");
     expect(formatTokenAmount(1024 * 1024)).toBe("1M");
+  });
+});
+
+describe("formatQuantity", () => {
+  it("caps long quota decimals", () => {
+    expect(formatQuantity(1234.56789)).toBe("1,234.57");
+    expect(formatQuantity(5000)).toBe("5,000");
+    expect(formatQuantity(undefined)).toBeUndefined();
   });
 });
 

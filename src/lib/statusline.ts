@@ -397,7 +397,12 @@ function providerBalanceRank(balance: UsageBalance): number {
 
 function displayableBalanceValue(balance: UsageBalance): string | undefined {
   const value = balance.value.trim();
-  return value && /\d/.test(value) ? value : undefined;
+  if (!value || !/\d/.test(value)) return undefined;
+  return value.replace(/(\d+\.\d{3,})/g, (match) => {
+    const amount = Number(match);
+    if (!Number.isFinite(amount)) return match;
+    return amount.toFixed(2).replace(/\.?0+$/, "");
+  });
 }
 
 export function providerBalanceText(report: UsageReport | undefined): string | undefined {

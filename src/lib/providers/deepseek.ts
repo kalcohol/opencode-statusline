@@ -28,7 +28,9 @@ async function collectDeepSeek(input: AdapterInput): Promise<UsageReport> {
       const granted = toNonEmptyString(raw.granted_balance);
       const topped = toNonEmptyString(raw.topped_up_balance);
       if (granted || topped) {
-        report.items.push({ label: `${currency} split`, value: `granted ${granted ?? "0"}, topped up ${topped ?? "0"}` });
+        const grantedText = formatMoney(granted, currency) ?? granted ?? "0";
+        const toppedText = formatMoney(topped, currency) ?? topped ?? "0";
+        report.items.push({ label: `${currency} split`, value: `granted ${grantedText}, topped up ${toppedText}` });
       }
     }
     if (report.balances.length === 0) throw new Error("No balance rows found");

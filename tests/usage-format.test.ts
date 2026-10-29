@@ -20,4 +20,22 @@ describe("usage report formatting", () => {
     expect(text).toContain("Updated: 2026-01-02 03:04:05");
     expect(text).toContain("Cache: stale (last successful read)");
   });
+
+  it("caps quota count decimals", () => {
+    const text = formatUsageReport({
+      ...report,
+      stale: false,
+      windows: [
+        {
+          key: "other",
+          label: "Plan quota",
+          used: 1234.56789,
+          total: 5000.1234,
+          unit: "credits"
+        }
+      ]
+    });
+
+    expect(text).toContain("Plan quota: 1,234.57/5,000.12 credits");
+  });
 });

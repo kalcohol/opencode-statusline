@@ -495,5 +495,11 @@ describe("statusline snapshot rendering", () => {
         ]
       })
     ).toBe("bal $12.34");
+    expect(
+      providerBalanceText({
+        ...quota,
+        balances: [{ label: "credits", value: "$12.345678" }]
+      })
+    ).toBe("bal $12.35");
   });
 });

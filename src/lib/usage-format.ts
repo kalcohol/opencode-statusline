@@ -1,6 +1,7 @@
 import {
   formatLocalDateTime,
   formatPercent,
+  formatQuantity,
   formatReset,
   sanitizeDisplayText
 } from "./format.js";
@@ -11,9 +12,11 @@ function formatWindow(window: UsageWindow): string {
   if (window.usedPercent !== undefined) parts.push(`${formatPercent(window.usedPercent)} used`);
   if (window.remainingPercent !== undefined) parts.push(`${formatPercent(window.remainingPercent)} left`);
   const unit = window.unit ? ` ${window.unit}` : "";
-  if (window.used !== undefined && window.total !== undefined) parts.push(`${window.used}/${window.total}${unit}`);
-  else if (window.used !== undefined) parts.push(`used ${window.used}${unit}`);
-  else if (window.total !== undefined) parts.push(`limit ${window.total}${unit}`);
+  const used = formatQuantity(window.used);
+  const total = formatQuantity(window.total);
+  if (used !== undefined && total !== undefined) parts.push(`${used}/${total}${unit}`);
+  else if (used !== undefined) parts.push(`used ${used}${unit}`);
+  else if (total !== undefined) parts.push(`limit ${total}${unit}`);
   const reset = formatReset(window);
   if (reset) parts.push(`reset ${reset}`);
   return `${window.label}: ${parts.join(", ") || "available"}`;

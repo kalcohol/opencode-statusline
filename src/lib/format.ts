@@ -38,6 +38,14 @@ export function formatMoney(value: unknown, currency = "USD"): string | undefine
   return `${amount.toFixed(2)} ${currency}`;
 }
 
+export function formatQuantity(value: unknown, maximumFractionDigits = 2): string | undefined {
+  const amount = toFiniteNumber(value);
+  if (amount === undefined) return undefined;
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits
+  }).format(amount);
+}
+
 export function formatTokenAmount(value: number): string {
   if (!Number.isFinite(value)) return "";
   const sign = value < 0 ? "-" : "";
