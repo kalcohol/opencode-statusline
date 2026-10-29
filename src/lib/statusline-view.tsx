@@ -18,6 +18,7 @@ import {
 import type { StatuslineFieldID } from "./statusline-config.js";
 import { clearQuotaCaches, loadQuotaReport } from "./quota.js";
 import { SubagentBadgeTracker } from "./subagent-badge.js";
+import { familySyncTargets, isSubtreeSession } from "./statusline-view-logic.js";
 
 const QUOTA_FIELDS: readonly StatuslineFieldID[] = ["quota_5h", "quota_weekly", "provider_balance"];
 
@@ -170,13 +171,16 @@ export function Statusline(props: {
 
   createEffect(() => {
     if (!wantFamily()) return;
-    for (const item of sessions()) {
-      if (item.id === props.sessionID) continue;
-      if (props.context.data.session.message.list(item.id).length > 0) continue;
-      if (familySynced.has(item.id)) continue;
-      familySynced.add(item.id);
+    const targets = familySyncTargets({
+      sessions: sessions(),
+      currentSessionID: props.sessionID,
+      synced: familySynced,
+      messages: (sessionID) => props.context.data.session.message.list(sessionID)
+    });
+    for (const sessionID of targets) {
+      familySynced.add(sessionID);
       void props.context.data.session.message
-        .sync(item.id)
+        .sync(sessionID)
         .then(() => setRefreshTick((value) => value + 1))
         .catch(() => undefined);
     }
@@ -243,25 +247,25 @@ export function Statusline(props: {
     setSubagentDone({ count: 0 });
   });
 
-  const isSubtreeSession = (sessionID: string) =>
-    sessionID !== props.sessionID && sessions().some((item) => item.id === sessionID);
+  const inSubtree = (sessionID: string) =>
+    isSubtreeSession(sessionID, props.sessionID, sessions());
 
   const onExecution = (event: { data: { sessionID: string } }) => {
     const sessionID = event.data.sessionID;
-    if (sessionID === props.sessionID || isSubtreeSession(sessionID)) {
+    if (sessionID === props.sessionID || inSubtree(sessionID)) {
       setRefreshTick((value) => value + 1);
     }
   };
   const onExecutionStarted = (event: { data: { sessionID: string } }) => {
     const sessionID = event.data.sessionID;
-    if (!isSubtreeSession(sessionID)) return;
+    if (!inSubtree(sessionID)) return;
     const messages = props.context.data.session.message.list(sessionID);
     badgeTracker.start(sessionID, messages.at(-1)?.id);
     subagentDoneVersion += 1;
   };
   const onSubagentDone = (event: { data: { sessionID: string } }) => {
     const sessionID = event.data.sessionID;
-    if (!isSubtreeSession(sessionID)) return;
+    if (!inSubtree(sessionID)) return;
     const finished = badgeTracker.finish(sessionID);
     if (!finished.counted) return;
 
