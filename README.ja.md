@@ -79,7 +79,7 @@ OpenCode を再起動してください。TUI-only パッケージなので `ope
 | `context_length` | コンテキスト上限 | なし |
 | `context_window` | 使用/上限 | あり |
 | `generation_metrics` | 現在 session の turn 生成速度 `gen 42 tok/s` | なし |
-| `family_generation` | 現在 session + 実行中 subagent の wall-clock union 速度 `family gen 42 tok/s`、デフォルト無効 | なし |
+| `family_generation` | 現在 session + 実行中 subagent の wall-clock union 速度 `all gen 42 tok/s`、デフォルト無効 | なし |
 | `subagent_status` | 実行中 subagent 数；完了後は `sub N done` を短時間表示（速度があれば併記） | 実行中の数のみ |
 | `agent_status` | メイン session の実行状態 | あり（spinner） |
 | `quota_5h` | provider 5h quota 使用率 | Console/Go のみ |

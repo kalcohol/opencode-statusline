@@ -83,7 +83,7 @@ ${XDG_CONFIG_HOME:-~/.config}/opencode/cli.json
 | `context_length` | 上下文上限 | 否 |
 | `context_window` | 已用/总上下文 | 是（tokens + %） |
 | `generation_metrics` | 当前 session 当前 turn 的生成速度 `gen 42 tok/s` | 否 |
-| `family_generation` | 当前 session + 活跃 subagents 的 wall-clock union 速度 `family gen 42 tok/s`，默认关闭 | 否 |
+| `family_generation` | 当前 session + 活跃 subagents 的 wall-clock union 速度 `all gen 42 tok/s`，默认关闭 | 否 |
 | `subagent_status` | running subagent 数量；完成后短暂显示 `sub N done`，有数据时带速度 | 是（仅 running 数量） |
 | `agent_status` | 主 session 是否 running | 是（spinner） |
 | `quota_5h` | provider 5h quota 使用百分比 | 仅 Console/Go |

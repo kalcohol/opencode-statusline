@@ -346,6 +346,43 @@ describe("statusline snapshot rendering", () => {
     expect(generationMetrics(messages)).toBeUndefined();
   });
 
+  it("keeps the last completed step speed while the next step is streaming", () => {
+    const user = (id: string, created: number) =>
+      ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
+    const messages = [
+      user("user-1", 0),
+      assistant({ id: "step-1", created: 0, streamed: 1_000, completed: 1_100, tokens: tokens(100, 100, 0) }),
+      {
+        ...assistant({ id: "step-2", created: 2_000, tokens: tokens(100, 100, 0) }),
+        time: { created: 2_000 }
+      } as unknown as SessionMessageInfo
+    ];
+
+    expect(generationMetrics(messages)?.tokensPerSecond).toBe(100);
+  });
+
+  it("keeps family speed stable while the next parent step is streaming", () => {
+    const user = (id: string, created: number) =>
+      ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
+    const messages = [
+      user("user-1", 0),
+      assistant({ id: "step-1", created: 0, streamed: 1_000, completed: 1_100, tokens: tokens(100, 100, 0) }),
+      {
+        ...assistant({ id: "step-2", created: 2_000, tokens: tokens(100, 100, 0) }),
+        time: { created: 2_000 }
+      } as unknown as SessionMessageInfo
+    ];
+
+    expect(
+      familyGenerationMetrics({
+        parentMessages: messages,
+        parentRunning: true,
+        children: [],
+        now: 5_000
+      })?.tokensPerSecond
+    ).toBe(100);
+  });
+
   it("computes generation speed only after an explicit execution boundary", () => {
     const user = (id: string, created: number) =>
       ({ id, type: "user", time: { created } }) as unknown as SessionMessageInfo;
@@ -447,7 +484,7 @@ describe("statusline snapshot rendering", () => {
     });
 
     expect(renderStatuslineParts(snapshot, ["family_generation"])).toEqual([
-      { field: "family_generation", text: "family gen 42 tok/s" }
+      { field: "family_generation", text: "all gen 42 tok/s" }
     ]);
   });
 

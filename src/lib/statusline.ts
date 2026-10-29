@@ -181,35 +181,36 @@ export function generationMetrics(
   const boundaryIndex = boundary ? messages.findIndex((message) => message.id === boundary) : -1;
   if (boundary && boundaryIndex === -1) return undefined;
   const limit = boundaryIndex === -1 ? messages.length : boundaryIndex;
-  const lastAssistantIndex = messages.findLastIndex(
-    (message, index) => index < limit && message.type === "assistant"
+  const lastCompletedIndex = messages.findLastIndex(
+    (message, index) =>
+      index < limit &&
+      message.type === "assistant" &&
+      message.tokens !== undefined &&
+      message.time.streamed !== undefined
   );
-  if (lastAssistantIndex === -1) return undefined;
+  if (lastCompletedIndex === -1) return undefined;
   const lastInputIndex = messages.findLastIndex(
     (message, index) =>
       index < limit && (message.type === "user" || message.type === "synthetic")
   );
-  if (lastInputIndex > lastAssistantIndex) return undefined;
-  const lastAssistant = messages[lastAssistantIndex];
-  if (lastAssistant.type !== "assistant" || !lastAssistant.tokens) return undefined;
+  if (lastInputIndex > lastCompletedIndex) return undefined;
   const compactionIndex = messages.findLastIndex(
     (message, index) =>
       index < limit && message.type === "compaction" && message.status === "completed"
   );
-  if (compactionIndex > lastAssistantIndex) return undefined;
-  const end = lastAssistantIndex + 1;
+  if (compactionIndex > lastCompletedIndex) return undefined;
+  const end = lastCompletedIndex + 1;
   const start = turnStartIndex(messages, end);
   const steps = messages
     .slice(start + 1, end)
-    .filter((message): message is SessionMessageAssistant => message.type === "assistant");
+    .filter(
+      (message): message is SessionMessageAssistant =>
+        message.type === "assistant" &&
+        message.tokens !== undefined &&
+        message.time.streamed !== undefined
+    );
   if (!steps.length) return undefined;
-  const durations = steps.flatMap((step) => {
-    const created = step.time.created;
-    const streamed = step.time.streamed;
-    if (streamed === undefined) return [];
-    return [Math.max(0, streamed - created)];
-  });
-  if (durations.length !== steps.length) return undefined;
+  const durations = steps.map((step) => Math.max(0, step.time.streamed! - step.time.created));
   const generatedTokens = steps.reduce(
     (total, step) => total + (step.tokens?.output ?? 0) + (step.tokens?.reasoning ?? 0),
     0
@@ -235,38 +236,41 @@ function currentTurnSamples(
   const boundaryIndex = boundary ? messages.findIndex((message) => message.id === boundary) : -1;
   if (boundary && boundaryIndex === -1) return undefined;
   const limit = boundaryIndex === -1 ? messages.length : boundaryIndex;
-  const lastAssistantIndex = messages.findLastIndex(
-    (message, index) => index < limit && message.type === "assistant"
+  const lastCompletedIndex = messages.findLastIndex(
+    (message, index) =>
+      index < limit &&
+      message.type === "assistant" &&
+      message.tokens !== undefined &&
+      message.time.streamed !== undefined
   );
-  if (lastAssistantIndex === -1) return undefined;
+  if (lastCompletedIndex === -1) return undefined;
   const lastInputIndex = messages.findLastIndex(
     (message, index) =>
       index < limit && (message.type === "user" || message.type === "synthetic")
   );
-  if (lastInputIndex > lastAssistantIndex) return undefined;
+  if (lastInputIndex > lastCompletedIndex) return undefined;
   const compactionIndex = messages.findLastIndex(
     (message, index) =>
       index < limit && message.type === "compaction" && message.status === "completed"
   );
-  if (compactionIndex > lastAssistantIndex) return undefined;
-  const end = lastAssistantIndex + 1;
+  if (compactionIndex > lastCompletedIndex) return undefined;
+  const end = lastCompletedIndex + 1;
   const start = turnStartIndex(messages, end);
   const steps = messages
     .slice(start + 1, end)
-    .filter((message): message is SessionMessageAssistant => message.type === "assistant");
+    .filter(
+      (message): message is SessionMessageAssistant =>
+        message.type === "assistant" &&
+        message.tokens !== undefined &&
+        message.time.streamed !== undefined
+    );
   if (!steps.length) return undefined;
 
-  const samples: GenerationSample[] = [];
-  for (const step of steps) {
-    if (!step.tokens) return undefined;
-    const streamed = step.time.streamed;
-    if (streamed === undefined) return undefined;
-    samples.push({
-      start: step.time.created,
-      end: streamed,
-      tokens: step.tokens.output + step.tokens.reasoning
-    });
-  }
+  const samples: GenerationSample[] = steps.map((step) => ({
+    start: step.time.created,
+    end: step.time.streamed!,
+    tokens: step.tokens!.output + step.tokens!.reasoning
+  }));
 
   return {
     startMs: start >= 0 ? messages[start].time.created : Math.min(...samples.map((sample) => sample.start)),
@@ -451,7 +455,7 @@ function fieldText(field: StatuslineFieldID, snapshot: StatuslineSnapshot): stri
       return generationMetricsText(snapshot.generation);
     case "family_generation": {
       const speed = snapshot.familyGeneration?.tokensPerSecond;
-      return speed === undefined ? undefined : `family gen ${formatTokensPerSecond(speed)} tok/s`;
+      return speed === undefined ? undefined : `all gen ${formatTokensPerSecond(speed)} tok/s`;
     }
     case "subagent_status":
       return subagentStatusText(snapshot);

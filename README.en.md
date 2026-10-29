@@ -79,7 +79,7 @@ Show the current provider's quota/balance. OpenCode Go has two paths: a provider
 | `context_length` | Context limit | no |
 | `context_window` | Used/total context | yes |
 | `generation_metrics` | Current session turn generation speed `gen 42 tok/s` | no |
-| `family_generation` | Current session + active subagents wall-clock union speed `family gen 42 tok/s`; off by default | no |
+| `family_generation` | Current session + active subagents wall-clock union speed `all gen 42 tok/s`; off by default | no |
 | `subagent_status` | Running subagent count; briefly shows `sub N done` with speed when available | running count only |
 | `agent_status` | Main session running state | yes (spinner) |
 | `quota_5h` | Provider 5h quota percent | Console/Go only |
