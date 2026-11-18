@@ -127,7 +127,7 @@ repo | branch | git_diff_stats | quota_5h | quota_weekly | provider_balance
 
 ## 設定保存
 
-フィールド選択は `context.storage.store` に保存され、plugin id ごとに名前空間化されます。`statusline-plugin.json` や `OPENCODE_STATUSLINE_CONFIG` / `OPENCODE_STATUSLINE_STATE_DIR` は不要です。
+フィールド選択は `context.storage.store` に保存され、plugin id ごとに名前空間化されます。V2 設定がまだない初回起動時のみ、旧版 `statusline-plugin.json`（`OPENCODE_STATUSLINE_CONFIG`、`XDG_DATA_HOME`、または data ディレクトリ）のフィールド選択を一度だけ取り込みます。以降は V2 store のみを読みます。`OPENCODE_STATUSLINE_STATE_DIR` は不要です。
 
 ## 開発
 

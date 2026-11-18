@@ -127,7 +127,7 @@ See [doc/provider-query-methods.en.md](doc/provider-query-methods.en.md) for end
 
 ## Storage
 
-Field selection is stored through `context.storage.store` and namespaced by the plugin id. There is no separate `statusline-plugin.json` and no `OPENCODE_STATUSLINE_CONFIG` / `OPENCODE_STATUSLINE_STATE_DIR`.
+Field selection is stored through `context.storage.store` and namespaced by the plugin id. On the first launch without V2 settings, the plugin imports the field selection from the legacy `statusline-plugin.json` (`OPENCODE_STATUSLINE_CONFIG`, `XDG_DATA_HOME`, or the data directory) once; after that only the V2 store is read. `OPENCODE_STATUSLINE_STATE_DIR` is no longer needed.
 
 ## Development
 

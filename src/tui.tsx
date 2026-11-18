@@ -4,6 +4,7 @@ import type { Context } from "@opencode/plugin/tui/context";
 import { Show } from "solid-js";
 import { Statusline } from "./lib/statusline-view.js";
 import { openQuotaDialog } from "./lib/quota-dialog.js";
+import { loadLegacyStatuslineFields } from "./lib/legacy-config.js";
 import {
   DEFAULT_STATUSLINE_FIELDS,
   STATUSLINE_CONFIG_VERSION,
@@ -96,10 +97,11 @@ async function configureStatusline(
 export default Plugin.define({
   id: "opencode-statusline",
   setup(context) {
+    const initialFields = loadLegacyStatuslineFields() ?? DEFAULT_STATUSLINE_FIELDS;
     const [settings, update] = context.storage.store<Settings>("settings", {
       initial: {
         version: STATUSLINE_CONFIG_VERSION,
-        fields: [...DEFAULT_STATUSLINE_FIELDS]
+        fields: [...initialFields]
       }
     });
     const fields: FieldsAccessor = () => normalizeStatuslineFields(settings.fields);

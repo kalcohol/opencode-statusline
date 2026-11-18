@@ -135,7 +135,7 @@ Endpoint 细节见 [doc/provider-query-methods.md](doc/provider-query-methods.md
 
 ## 配置存储
 
-字段选择通过 OpenCode V2 `context.storage.store` 保存，由 OpenCode 按插件 id 自动命名空间化。不再使用单独的 `statusline-plugin.json`，也不需要 `OPENCODE_STATUSLINE_CONFIG` / `OPENCODE_STATUSLINE_STATE_DIR`。
+字段选择通过 OpenCode V2 `context.storage.store` 保存，由 OpenCode 按插件 id 自动命名空间化。首次在尚未保存 V2 设置时，会一次性导入旧版 `statusline-plugin.json`（`OPENCODE_STATUSLINE_CONFIG`、`XDG_DATA_HOME` 或 data 目录）的字段选择；之后只读取 V2 storage。不再需要 `OPENCODE_STATUSLINE_STATE_DIR`。
 
 ## 开发
 

@@ -20,6 +20,7 @@ src/
     statusline.ts          snapshot + pure field rendering
     statusline-view.tsx    prompt.footer.status component
     statusline-config.ts   field definitions, defaults, argument parsing
+    legacy-config.ts       one-time import of V1 statusline-plugin.json
     quota.ts               built-in Go usage + provider collector bridge
     quota-dialog.tsx       /quota dialog
     providers.ts           provider barrel
